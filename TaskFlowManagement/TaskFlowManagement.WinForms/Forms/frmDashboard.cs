@@ -15,18 +15,21 @@ namespace TaskFlowManagement.WinForms.Forms
     {
         private readonly ITaskService _taskService;
         private readonly IProjectService _projectService;
+        private readonly IExpenseService _expenseService;
         
         private DashboardStatsDto? _currentOverview = null;
         private List<ProgressReportDto> _currentProgress = new();
         private List<BudgetReportDto> _currentBudget = new();
+        private ProjectBudgetSummaryDto? _currentBudgetSummary = null;
         private int _hoverProgressIndex = -1;
 
-        public frmDashboard(ITaskService taskService, IProjectService projectService)
+        public frmDashboard(ITaskService taskService, IProjectService projectService, IExpenseService expenseService)
         {
-            InitializeComponent();
             _taskService = taskService;
             _projectService = projectService;
+            _expenseService = expenseService;
 
+            InitializeComponent();
             SetupUI();
         }
 
@@ -61,6 +64,16 @@ namespace TaskFlowManagement.WinForms.Forms
             cboProject.SelectedIndexChanged += async (s, e) => await LoadDashboardDataAsync();
             pnlProgressChart.MouseMove += PnlProgressChart_MouseMove;
             pnlProgressChart.MouseLeave += (s, e) => { _hoverProgressIndex = -1; pnlProgressChart.Invalidate(); };
+
+            // Phụ trách đồng bộ dữ liệu Realtime khi có thay đổi từ Task/Expense Service
+            _taskService.TaskDataChanged += async (s, e) => {
+                if (this.IsHandleCreated && !this.IsDisposed)
+                {
+                    this.BeginInvoke(new Action(async () => await LoadDashboardDataAsync()));
+                }
+            };
+            this.FormClosing += (s, e) => _taskService.TaskDataChanged -= async (s, e) => await LoadDashboardDataAsync(); // Cần cẩn thận với lambda anonymous!
+            // Sửa lại: Dùng method cụ thể để gỡ sự kiện chính xác.
 
             // Set DoubleBuffered
             EnableDoubleBuffer(pnlPieChart);
@@ -161,14 +174,20 @@ namespace TaskFlowManagement.WinForms.Forms
                 var task2 = _taskService.GetProgressReportAsync(projectId);
                 
                 Task<List<BudgetReportDto>>? task3 = null;
+                Task<ProjectBudgetSummaryDto?>? task4 = null;
+
                 if (AppSession.IsManager || AppSession.IsAdmin)
                 {
                     task3 = _taskService.GetBudgetReportAsync(projectId);
+                    if (projectId.HasValue)
+                        task4 = _expenseService.GetProjectBudgetSummaryAsync(projectId.Value);
                 }
 
                 _currentOverview = await task1;
                 _currentProgress = await task2;
                 if (task3 != null) _currentBudget = await task3;
+                if (task4 != null) _currentBudgetSummary = await task4;
+                else _currentBudgetSummary = null;
                 
                 RenderStatCards(_currentOverview);
                 
@@ -191,8 +210,18 @@ namespace TaskFlowManagement.WinForms.Forms
             pnlCards.Controls.Clear();
             pnlCards.Controls.Add(CreateCard("Tổng Công Việc", stats.TotalTasks.ToString(), "📁", UIHelper.ColorPrimary));
             pnlCards.Controls.Add(CreateCard("Đã Hoàn Thành", stats.CompletedTasks.ToString(), "✅", UIHelper.ColorSuccess));
-            pnlCards.Controls.Add(CreateCard("Sự Cố (Quá Hạn)", stats.OverdueTasks.ToString(), "🚩", Color.FromArgb(185, 28, 28))); // Đỏ đậm theo yêu cầu
-            pnlCards.Controls.Add(CreateCard("Tới Hạn (7 ngày)", stats.DueSoonTasks.ToString(), "⚠️", UIHelper.ColorWarning));
+            pnlCards.Controls.Add(CreateCard("Sự Cố (Quá Hạn)", stats.OverdueTasks.ToString(), "🚩", Color.FromArgb(185, 28, 28))); 
+            
+            if (_currentBudgetSummary != null)
+            {
+                Color budgetColor = _currentBudgetSummary.IsOverBudget ? UIHelper.ColorDanger : UIHelper.ColorSuccess;
+                string budgetVal = _currentBudgetSummary.Remaining.ToString("N0") + " ₫";
+                pnlCards.Controls.Add(CreateCard("Ngân Sách Còn Lại", budgetVal, "💰", budgetColor));
+            }
+            else
+            {
+                pnlCards.Controls.Add(CreateCard("Tới Hạn (7 ngày)", stats.DueSoonTasks.ToString(), "⚠️", UIHelper.ColorWarning));
+            }
         }
 
         private Panel CreateCard(string title, string value, string icon, Color accentColor)

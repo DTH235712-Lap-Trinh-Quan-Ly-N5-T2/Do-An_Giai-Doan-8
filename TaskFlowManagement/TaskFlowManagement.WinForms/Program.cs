@@ -6,6 +6,7 @@ using TaskFlowManagement.Core.Interfaces.Services;
 using TaskFlowManagement.Core.Services.Auth;
 using TaskFlowManagement.Core.Services.Users;
 using TaskFlowManagement.Core.Services.Projects;
+using TaskFlowManagement.Core.Services.Expenses;
 using TaskFlowManagement.Core.Services.Tasks;
 using TaskFlowManagement.Infrastructure.Data;
 using TaskFlowManagement.Infrastructure.Repositories;
@@ -56,12 +57,14 @@ namespace TaskFlowManagement.WinForms
             services.AddScoped<ICustomerRepository, CustomerRepository>();
             services.AddScoped<ICommentRepository, CommentRepository>();
             services.AddScoped<IAttachmentRepository, AttachmentRepository>();
+            services.AddScoped<IExpenseRepository, ExpenseRepository>();
 
             // 4. Services
             services.AddScoped<IAuthService, AuthService>();
             services.AddScoped<IUserService, UserService>();
             services.AddScoped<IProjectService, ProjectService>();
             services.AddScoped<ITaskService, TaskService>();
+            services.AddScoped<IExpenseService, ExpenseService>();
 
             // 5. Forms
             services.AddTransient<frmLogin>();
@@ -80,6 +83,8 @@ namespace TaskFlowManagement.WinForms
             services.AddTransient<frmMyTasks>();
             // GD6: Dashboard Thống Kê
             services.AddTransient<frmDashboard>();
+            // GD8: Quản lý Chi phí
+            services.AddTransient<frmExpenses>();
             // frmTaskEdit KHÔNG đăng ký ở đây vì dùng `new` trực tiếp với tham số taskId runtime
 
             ServiceProvider = services.BuildServiceProvider();

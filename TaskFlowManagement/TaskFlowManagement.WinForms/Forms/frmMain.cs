@@ -49,6 +49,7 @@ namespace TaskFlowManagement.WinForms.Forms
             menuProjects.Visible     = true;
             menuReports.Visible      = true;
             menuTaskList.Visible     = true;
+            menuExpenses.Visible     = true;
             menuKanban.Visible       = true;
             menuUserAccounts.Visible = true;
 
@@ -178,6 +179,10 @@ namespace TaskFlowManagement.WinForms.Forms
         /// </summary>
         private void menuMyTasks_Click(object sender, EventArgs e)
             => OpenMdiChild(_serviceProvider.GetRequiredService<frmMyTasks>());
+
+        // ── Menu: Chi phí (Giai đoạn 8) ───────────────────────
+        private void menuExpenseList_Click(object sender, EventArgs e)
+            => OpenMdiChild(_serviceProvider.GetRequiredService<frmExpenses>());
 
         // ── Menu: Báo cáo (Giai đoạn 6) ───────────────────────
         private void OpenDashboardTab(int index)

@@ -71,4 +71,39 @@ namespace TaskFlowManagement.Core.DTOs
         public double AvgProgress { get; set; }
         public string Status { get; set; } = string.Empty;
     }
+
+    // =====================================================
+    // DTO cho GĐ8: Quản lý Chi phí – UC-23
+    // Cung cấp tóm tắt ngân sách cho từng dự án cụ thể
+    // =====================================================
+
+    /// <summary>
+    /// Tóm tắt ngân sách + chi phí thực tế của một dự án (GĐ8).
+    /// Dùng decimal cho MỌI trường tiền tệ – tuyệt đối KHÔNG dùng double/float.
+    /// </summary>
+    public class ProjectBudgetSummaryDto
+    {
+        public int     ProjectId    { get; set; }
+        public string  ProjectName  { get; set; } = string.Empty;
+
+        /// <summary>Ngân sách định mức của dự án (từ Project.Budget).</summary>
+        public decimal Budget       { get; set; }
+
+        /// <summary>Tổng chi phí thực tế (SUM(Expense.Amount) từ DB).</summary>
+        public decimal TotalExpense { get; set; }
+
+        /// <summary>Số tiền còn lại = Budget - TotalExpense (có thể âm nếu vượt quỹ).</summary>
+        public decimal Remaining    => Budget - TotalExpense;
+
+        /// <summary>
+        /// Tỉ lệ sử dụng ngân sách (%).
+        /// Trả về 100 nếu Budget = 0 nhưng có chi phí; trả về 0 nếu cả hai đều = 0.
+        /// </summary>
+        public double UsagePercent => Budget > 0
+            ? (double)Math.Round((TotalExpense / Budget) * 100m, 1)
+            : (TotalExpense > 0 ? 100.0 : 0.0);
+
+        /// <summary>True nếu chi phí vượt ngân sách định mức.</summary>
+        public bool IsOverBudget => TotalExpense > Budget && Budget > 0;
+    }
 }

@@ -25,6 +25,7 @@ namespace TaskFlowManagement.WinForms.Forms
             this.menuCustomers = new System.Windows.Forms.ToolStripMenuItem();
             this.menuProjects  = new System.Windows.Forms.ToolStripMenuItem();
             this.menuTasks     = new System.Windows.Forms.ToolStripMenuItem();
+            this.menuExpenses  = new System.Windows.Forms.ToolStripMenuItem();
             this.menuReports   = new System.Windows.Forms.ToolStripMenuItem();
 
             // Menu System children
@@ -56,6 +57,9 @@ namespace TaskFlowManagement.WinForms.Forms
             this.menuReportProgress = new System.Windows.Forms.ToolStripMenuItem();
             this.menuReportBudget   = new System.Windows.Forms.ToolStripMenuItem();
 
+            // Menu Expenses children
+            this.menuExpenseList    = new System.Windows.Forms.ToolStripMenuItem();
+
             this.menuStrip.SuspendLayout();
             this.statusStrip.SuspendLayout();
             this.SuspendLayout();
@@ -73,6 +77,7 @@ namespace TaskFlowManagement.WinForms.Forms
                 this.menuCustomers,
                 this.menuProjects,
                 this.menuTasks,
+                this.menuExpenses,
                 this.menuReports
             });
             this.menuStrip.Location = new System.Drawing.Point(0, 0);
@@ -198,6 +203,21 @@ namespace TaskFlowManagement.WinForms.Forms
             this.menuMyTasks.Text   = "📌  Công việc của tôi";
             this.menuMyTasks.Click += new System.EventHandler(this.menuMyTasks_Click);
 
+            // ---- menuExpenses ----
+            this.menuExpenses.BackColor = System.Drawing.Color.FromArgb(15, 23, 42);
+            this.menuExpenses.ForeColor = System.Drawing.Color.FromArgb(226, 232, 240);
+            this.menuExpenses.Name      = "menuExpenses";
+            this.menuExpenses.Padding   = new System.Windows.Forms.Padding(8, 0, 8, 0);
+            this.menuExpenses.Text      = "💸  Chi phí";
+            this.menuExpenses.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[]
+            {
+                this.menuExpenseList
+            });
+
+            this.menuExpenseList.Name   = "menuExpenseList";
+            this.menuExpenseList.Text   = "Quản lý chi phí & Ngân sách";
+            this.menuExpenseList.Click += new System.EventHandler(this.menuExpenseList_Click);
+
             // ---- menuReports ----
             this.menuReports.BackColor = System.Drawing.Color.FromArgb(15, 23, 42);
             this.menuReports.ForeColor = System.Drawing.Color.FromArgb(226, 232, 240);
@@ -310,6 +330,8 @@ namespace TaskFlowManagement.WinForms.Forms
         private System.Windows.Forms.ToolStripMenuItem menuTaskList;
         private System.Windows.Forms.ToolStripMenuItem menuKanban;
         private System.Windows.Forms.ToolStripMenuItem menuMyTasks;
+        private System.Windows.Forms.ToolStripMenuItem menuExpenses;
+        private System.Windows.Forms.ToolStripMenuItem menuExpenseList;
         private System.Windows.Forms.ToolStripMenuItem menuDashboard;
         private System.Windows.Forms.ToolStripMenuItem menuReportProgress;
         private System.Windows.Forms.ToolStripMenuItem menuReportBudget;

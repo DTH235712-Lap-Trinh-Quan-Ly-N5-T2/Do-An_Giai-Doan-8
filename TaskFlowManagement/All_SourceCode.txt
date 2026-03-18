@@ -186,6 +186,41 @@ namespace TaskFlowManagement.Core.DTOs
         public double AvgProgress { get; set; }
         public string Status { get; set; } = string.Empty;
     }
+
+    // =====================================================
+    // DTO cho GĐ8: Quản lý Chi phí – UC-23
+    // Cung cấp tóm tắt ngân sách cho từng dự án cụ thể
+    // =====================================================
+
+    /// <summary>
+    /// Tóm tắt ngân sách + chi phí thực tế của một dự án (GĐ8).
+    /// Dùng decimal cho MỌI trường tiền tệ – tuyệt đối KHÔNG dùng double/float.
+    /// </summary>
+    public class ProjectBudgetSummaryDto
+    {
+        public int     ProjectId    { get; set; }
+        public string  ProjectName  { get; set; } = string.Empty;
+
+        /// <summary>Ngân sách định mức của dự án (từ Project.Budget).</summary>
+        public decimal Budget       { get; set; }
+
+        /// <summary>Tổng chi phí thực tế (SUM(Expense.Amount) từ DB).</summary>
+        public decimal TotalExpense { get; set; }
+
+        /// <summary>Số tiền còn lại = Budget - TotalExpense (có thể âm nếu vượt quỹ).</summary>
+        public decimal Remaining    => Budget - TotalExpense;
+
+        /// <summary>
+        /// Tỉ lệ sử dụng ngân sách (%).
+        /// Trả về 100 nếu Budget = 0 nhưng có chi phí; trả về 0 nếu cả hai đều = 0.
+        /// </summary>
+        public double UsagePercent => Budget > 0
+            ? (double)Math.Round((TotalExpense / Budget) * 100m, 1)
+            : (TotalExpense > 0 ? 100.0 : 0.0);
+
+        /// <summary>True nếu chi phí vượt ngân sách định mức.</summary>
+        public bool IsOverBudget => TotalExpense > Budget && Budget > 0;
+    }
 }
 
 
@@ -968,6 +1003,36 @@ namespace TaskFlowManagement.Core.Interfaces
 
 
 ========================================
+--- FILE: IExpenseRepository.cs ---
+========================================
+
+using TaskFlowManagement.Core.Entities;
+
+namespace TaskFlowManagement.Core.Interfaces
+{
+    /// <summary>
+    /// Repository cho Expense – CRUD chi phí dự án (GĐ8: UC-23).
+    /// Kế thừa IRepository&lt;Expense&gt; → có sẵn GetByIdAsync, GetAllAsync, AddAsync, UpdateAsync, DeleteAsync.
+    /// </summary>
+    public interface IExpenseRepository : IRepository<Expense>
+    {
+        /// <summary>
+        /// Lấy danh sách chi phí của một dự án, kèm thông tin người tạo (CreatedBy).
+        /// Sắp xếp theo ExpenseDate giảm dần (mới nhất lên đầu).
+        /// </summary>
+        Task<List<Expense>> GetByProjectAsync(int projectId);
+
+        /// <summary>
+        /// Tính tổng chi phí thực tế của một dự án trực tiếp trên DB (SUM aggregation).
+        /// Trả về 0 nếu chưa có chi phí nào.
+        /// Kết quả là decimal – KHÔNG dùng double/float.
+        /// </summary>
+        Task<decimal> GetTotalByProjectAsync(int projectId);
+    }
+}
+
+
+========================================
 --- FILE: IProjectRepository.cs ---
 ========================================
 
@@ -1275,6 +1340,64 @@ namespace TaskFlowManagement.Core.Interfaces.Services
 
 
 ========================================
+--- FILE: IExpenseService.cs ---
+========================================
+
+using TaskFlowManagement.Core.DTOs;
+using TaskFlowManagement.Core.Entities;
+
+namespace TaskFlowManagement.Core.Interfaces.Services
+{
+    /// <summary>
+    /// Service nghiệp vụ quản lý Chi phí dự án (GĐ8: UC-23).
+    /// Tất cả phương thức đều là async để không chặn UI thread.
+    /// </summary>
+    public interface IExpenseService
+    {
+        // ── Danh sách ─────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Lấy danh sách chi phí của một dự án (kèm CreatedBy).
+        /// Sắp xếp theo ExpenseDate giảm dần.
+        /// </summary>
+        Task<List<Expense>> GetByProjectAsync(int projectId);
+
+        // ── CRUD ──────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Thêm khoản chi phí mới.
+        /// - Validation: Amount phải > 0; ExpenseDate không được lớn hơn ngày hiện tại.
+        /// - Audit: CreatedById được gán tự động từ AppSession.UserId.
+        /// - CreatedAt được gán tự động DateTime.UtcNow.
+        /// </summary>
+        Task<(bool Success, string Message)> AddExpenseAsync(Expense expense);
+
+        /// <summary>
+        /// Cập nhật thông tin khoản chi phí đã có.
+        /// Validation tương tự AddExpenseAsync (Amount > 0, ExpenseDate hợp lệ).
+        /// </summary>
+        Task<(bool Success, string Message)> UpdateExpenseAsync(Expense expense);
+
+        /// <summary>
+        /// Xóa khoản chi phí theo ID (hard delete).
+        /// Trả về lỗi nếu không tìm thấy bản ghi.
+        /// </summary>
+        Task<(bool Success, string Message)> DeleteExpenseAsync(int expenseId);
+
+        // ── Budget Summary ─────────────────────────────────────────────────
+
+        /// <summary>
+        /// Trả về tóm tắt ngân sách của một dự án:
+        /// Budget (từ Project), TotalExpense (SUM từ Expense), Remaining, UsagePercent.
+        /// Tất cả tính toán tiền tệ dùng decimal – KHÔNG dùng double/float.
+        /// Trả về null nếu dự án không tồn tại.
+        /// </summary>
+        Task<ProjectBudgetSummaryDto?> GetProjectBudgetSummaryAsync(int projectId);
+    }
+}
+
+
+========================================
 --- FILE: IProjectService.cs ---
 ========================================
 
@@ -1342,6 +1465,12 @@ namespace TaskFlowManagement.Core.Interfaces.Services
         /// Sử dụng để đồng bộ UI (Refresh grid).
         /// </summary>
         event EventHandler TaskDataChanged;
+
+        /// <summary>
+        /// Kích hoạt sự kiện TaskDataChanged thủ công từ bên ngoài (e.g. từ ExpenseService).
+        /// Giúp Dashboard nhận biết cần load lại dữ liệu.
+        /// </summary>
+        void NotifyDataChanged();
 
         // ── Truy vấn đơn ─────────────────────────────────────────
 
@@ -1593,7 +1722,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TaskFlowManagement.Core")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+bdcf554a47a2f5bb9084ac3c6ffee734f2e9ddca")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+528360b3ff049cd7162e7d36fb3f2d819e5bb27b")]
 [assembly: System.Reflection.AssemblyProductAttribute("TaskFlowManagement.Core")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TaskFlowManagement.Core")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
@@ -1646,7 +1775,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TaskFlowManagement.Core")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+21475b85ea8b4e7a8954939c989347ca129bdafe")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+528360b3ff049cd7162e7d36fb3f2d819e5bb27b")]
 [assembly: System.Reflection.AssemblyProductAttribute("TaskFlowManagement.Core")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TaskFlowManagement.Core")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
@@ -1780,6 +1909,132 @@ namespace TaskFlowManagement.Core.Services.Auth
                 .ToList()
                 ?? new List<string>()
         };
+    }
+}
+
+
+========================================
+--- FILE: ExpenseService.cs ---
+========================================
+
+using TaskFlowManagement.Core.DTOs;
+using TaskFlowManagement.Core.Entities;
+using TaskFlowManagement.Core.Interfaces;
+using TaskFlowManagement.Core.Interfaces.Services;
+
+namespace TaskFlowManagement.Core.Services.Expenses
+{
+    /// <summary>
+    /// Triển khai nghiệp vụ Quản lý Chi phí (GĐ8: UC-23).
+    /// Tuân thủ quy tắc Financial Precision và Audit Trail.
+    /// </summary>
+    public class ExpenseService : IExpenseService
+    {
+        private readonly IExpenseRepository _expenseRepo;
+        private readonly IProjectRepository _projectRepo;
+        private readonly ITaskService _taskService;
+
+        public ExpenseService(IExpenseRepository expenseRepo, IProjectRepository projectRepo, ITaskService taskService)
+        {
+            _expenseRepo = expenseRepo;
+            _projectRepo = projectRepo;
+            _taskService = taskService;
+        }
+
+        public async Task<List<Expense>> GetByProjectAsync(int projectId)
+        {
+            return await _expenseRepo.GetByProjectAsync(projectId);
+        }
+
+        public async Task<(bool Success, string Message)> AddExpenseAsync(Expense expense)
+        {
+            // 1. Validation
+            if (expense.Amount <= 0)
+                return (false, "Số tiền phải lớn hơn 0.");
+
+            if (expense.ExpenseDate > DateOnly.FromDateTime(DateTime.Today))
+                return (false, "Ngày chi phí không được vượt quá ngày hiện tại.");
+
+            if (expense.ProjectId <= 0)
+                return (false, "Vui lòng chọn dự án hợp lệ.");
+
+            if (string.IsNullOrWhiteSpace(expense.ExpenseType))
+                return (false, "Vui lòng chọn loại chi phí.");
+
+            try
+            {
+                await _expenseRepo.AddAsync(expense);
+                _taskService.NotifyDataChanged();
+                return (true, "Thêm chi phí thành công.");
+            }
+            catch (Exception ex)
+            {
+                return (false, $"Lỗi server: {ex.Message}");
+            }
+        }
+
+        public async Task<(bool Success, string Message)> UpdateExpenseAsync(Expense expense)
+        {
+            if (expense.Amount <= 0)
+                return (false, "Số tiền phải lớn hơn 0.");
+
+            if (expense.ExpenseDate > DateOnly.FromDateTime(DateTime.Today))
+                return (false, "Ngày chi phí không được vượt quá ngày hiện tại.");
+
+            try
+            {
+                var existing = await _expenseRepo.GetByIdAsync(expense.Id);
+                if (existing == null) return (false, "Không tìm thấy khoản chi phí này.");
+
+                // Cập nhật các trường cho phép
+                existing.ProjectId = expense.ProjectId;
+                existing.ExpenseType = expense.ExpenseType;
+                existing.Amount = expense.Amount;
+                existing.ExpenseDate = expense.ExpenseDate;
+                existing.Note = expense.Note;
+
+                await _expenseRepo.UpdateAsync(existing);
+                _taskService.NotifyDataChanged();
+                return (true, "Cập nhật chi phí thành công.");
+            }
+            catch (Exception ex)
+            {
+                return (false, $"Lỗi server: {ex.Message}");
+            }
+        }
+
+        public async Task<(bool Success, string Message)> DeleteExpenseAsync(int expenseId)
+        {
+            try
+            {
+                var existing = await _expenseRepo.GetByIdAsync(expenseId);
+                if (existing == null) return (false, "Không tìm thấy khoản chi phí này.");
+
+                await _expenseRepo.DeleteAsync(expenseId);
+                _taskService.NotifyDataChanged();
+                return (true, "Xóa chi phí thành công.");
+            }
+            catch (Exception ex)
+            {
+                return (false, $"Lỗi server: {ex.Message}");
+            }
+        }
+
+        public async Task<ProjectBudgetSummaryDto?> GetProjectBudgetSummaryAsync(int projectId)
+        {
+            var project = await _projectRepo.GetByIdAsync(projectId);
+            if (project == null) return null;
+
+            var totalExpense = await _expenseRepo.GetTotalByProjectAsync(projectId);
+
+            return new ProjectBudgetSummaryDto
+            {
+                ProjectId = project.Id,
+                ProjectName = project.Name,
+                Budget = project.Budget,
+                TotalExpense = totalExpense
+            };
+        }
     }
 }
 
@@ -1943,7 +2198,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
             _attachmentRepo = attachmentRepo ?? throw new ArgumentNullException(nameof(attachmentRepo));
         }
 
-        private void NotifyTaskDataChanged()
+        public void NotifyDataChanged()
         {
             TaskDataChanged?.Invoke(this, EventArgs.Empty);
         }
@@ -2037,7 +2292,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
                 ? null : task.Description.Trim();
 
             await _taskRepo.AddAsync(task);
-            NotifyTaskDataChanged();
+            NotifyDataChanged();
             return (true, $"Đã tạo công việc \"{task.Title}\" thành công.");
         }
 
@@ -2068,7 +2323,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
             try
             {
                 await _taskRepo.UpdateAsync(task); // ← Một lần duy nhất, đúng hoàn toàn
-                NotifyTaskDataChanged();
+                NotifyDataChanged();
                 return (true, "Cập nhật công việc thành công.");
             }
             catch (Exception ex)
@@ -2100,7 +2355,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
             } 
             catch { /* Ignore if it fails during cleanup */ }
 
-            NotifyTaskDataChanged();
+            NotifyDataChanged();
             return (true, $"Đã xóa công việc \"{task.Title}\".");
         }
 
@@ -2116,7 +2371,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
             if (progress > 100)
                 return (false, "Tiến độ phải từ 0 đến 100.");
             await _taskRepo.UpdateProgressAsync(taskId, progress, ResolvedStatusId);
-            NotifyTaskDataChanged();
+            NotifyDataChanged();
 
             return progress == 100
                 ? (true, "🎉 Công việc đã hoàn thành! Trạng thái chuyển sang RESOLVED.")
@@ -2159,7 +2414,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
             if (isManagerOrAbove)
             {
                 await _taskRepo.UpdateStatusAsync(taskId, statusId);
-                NotifyTaskDataChanged();
+                NotifyDataChanged();
                 return (true, $"Đã chuyển trạng thái sang \"{WorkflowConstants.GetStatusName(statusId)}\".");
             }
 
@@ -2173,7 +2428,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
                     "Liên hệ Manager nếu cần thay đổi task khác.");
 
             await _taskRepo.UpdateStatusAsync(taskId, statusId);
-            NotifyTaskDataChanged();
+            NotifyDataChanged();
             return (true, $"Đã chuyển trạng thái sang \"{WorkflowConstants.GetStatusName(statusId)}\".");
         }
 
@@ -2236,7 +2491,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
             if (testerId.HasValue)    parts.Add("Tester");
 
             var extra = parts.Count > 0 ? $" — đã gán {string.Join(", ", parts)}" : string.Empty;
-            NotifyTaskDataChanged();
+            NotifyDataChanged();
             return (true, $"Chuyển sang {newStatus}{extra} thành công.");
         }
 
@@ -2298,7 +2553,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
              // Get full data to return to UI (including user info)
              var addedComment = await _commentRepo.GetByIdAsync(comment.Id);
              
-             NotifyTaskDataChanged();
+             NotifyDataChanged();
              return (true, "Thêm bình luận thành công.", addedComment);
         }
 
@@ -2362,7 +2617,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
 
             var addedAttachment = await _attachmentRepo.GetByIdAsync(attachment.Id);
 
-            NotifyTaskDataChanged();
+            NotifyDataChanged();
             return (true, "Tải tệp thành công.", addedAttachment);
         }
 
@@ -2396,7 +2651,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
              }
 
              await _attachmentRepo.DeleteAsync(attachmentId);
-             NotifyTaskDataChanged();
+             NotifyDataChanged();
 
              return (true, "Đã xóa file đính kèm.");
         }
@@ -5742,7 +5997,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TaskFlowManagement.Infrastructure")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+bdcf554a47a2f5bb9084ac3c6ffee734f2e9ddca")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+528360b3ff049cd7162e7d36fb3f2d819e5bb27b")]
 [assembly: System.Reflection.AssemblyProductAttribute("TaskFlowManagement.Infrastructure")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TaskFlowManagement.Infrastructure")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
@@ -5795,7 +6050,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TaskFlowManagement.Infrastructure")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+21475b85ea8b4e7a8954939c989347ca129bdafe")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+49ec19cdf9ec6991c6cc9ffd6e41f73a688461a7")]
 [assembly: System.Reflection.AssemblyProductAttribute("TaskFlowManagement.Infrastructure")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TaskFlowManagement.Infrastructure")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
@@ -6061,6 +6316,97 @@ namespace TaskFlowManagement.Infrastructure.Repositories
         {
             using var ctx = _contextFactory.CreateDbContext();
             await ctx.Customers.Where(c => c.Id == id).ExecuteDeleteAsync();
+        }
+    }
+}
+
+
+========================================
+--- FILE: ExpenseRepository.cs ---
+========================================
+
+using Microsoft.EntityFrameworkCore;
+using TaskFlowManagement.Core.Entities;
+using TaskFlowManagement.Core.Interfaces;
+using TaskFlowManagement.Infrastructure.Data;
+
+namespace TaskFlowManagement.Infrastructure.Repositories
+{
+    /// <summary>
+    /// Repository triển khai IExpenseRepository phục vụ UC-23 (Giai đoạn 8).
+    /// Sử dụng IDbContextFactory để đảm bảo thread-safety trong môi trường WinForms.
+    /// </summary>
+    public class ExpenseRepository : IExpenseRepository
+    {
+        private readonly IDbContextFactory<AppDbContext> _contextFactory;
+
+        public ExpenseRepository(IDbContextFactory<AppDbContext> contextFactory)
+        {
+            _contextFactory = contextFactory;
+        }
+
+        public async Task<Expense?> GetByIdAsync(int id)
+        {
+            using var ctx = _contextFactory.CreateDbContext();
+            return await ctx.Expenses
+                .AsNoTracking()
+                .Include(e => e.Project)
+                .Include(e => e.CreatedBy)
+                .FirstOrDefaultAsync(e => e.Id == id);
+        }
+
+        public async Task<List<Expense>> GetAllAsync()
+        {
+            using var ctx = _contextFactory.CreateDbContext();
+            return await ctx.Expenses
+                .AsNoTracking()
+                .Include(e => e.Project)
+                .Include(e => e.CreatedBy)
+                .OrderByDescending(e => e.ExpenseDate)
+                .ToListAsync();
+        }
+
+        public async Task<List<Expense>> GetByProjectAsync(int projectId)
+        {
+            using var ctx = _contextFactory.CreateDbContext();
+            return await ctx.Expenses
+                .AsNoTracking()
+                .Include(e => e.CreatedBy)
+                .Where(e => e.ProjectId == projectId)
+                .OrderByDescending(e => e.ExpenseDate)
+                .ToListAsync();
+        }
+
+        public async Task<decimal> GetTotalByProjectAsync(int projectId)
+        {
+            using var ctx = _contextFactory.CreateDbContext();
+            // SUM aggregation trực tiếp trên Database
+            return await ctx.Expenses
+                .Where(e => e.ProjectId == projectId)
+                .SumAsync(e => e.Amount);
+        }
+
+        public async Task AddAsync(Expense entity)
+        {
+            using var ctx = _contextFactory.CreateDbContext();
+            entity.CreatedAt = DateTime.UtcNow;
+            await ctx.Expenses.AddAsync(entity);
+            await ctx.SaveChangesAsync();
+        }
+
+        public async Task UpdateAsync(Expense entity)
+        {
+            using var ctx = _contextFactory.CreateDbContext();
+            ctx.Expenses.Update(entity);
+            // Đảm bảo không ghi đè CreatedAt nếu không cần thiết 
+            // (Thường entity được load trước khi update nên sẽ giữ được CreatedAt)
+            await ctx.SaveChangesAsync();
+        }
+
+        public async Task DeleteAsync(int id)
+        {
+            using var ctx = _contextFactory.CreateDbContext();
+            await ctx.Expenses.Where(e => e.Id == id).ExecuteDeleteAsync();
         }
     }
 }
@@ -7057,6 +7403,7 @@ using TaskFlowManagement.Core.Interfaces.Services;
 using TaskFlowManagement.Core.Services.Auth;
 using TaskFlowManagement.Core.Services.Users;
 using TaskFlowManagement.Core.Services.Projects;
+using TaskFlowManagement.Core.Services.Expenses;
 using TaskFlowManagement.Core.Services.Tasks;
 using TaskFlowManagement.Infrastructure.Data;
 using TaskFlowManagement.Infrastructure.Repositories;
@@ -7107,12 +7454,14 @@ namespace TaskFlowManagement.WinForms
             services.AddScoped<ICustomerRepository, CustomerRepository>();
             services.AddScoped<ICommentRepository, CommentRepository>();
             services.AddScoped<IAttachmentRepository, AttachmentRepository>();
+            services.AddScoped<IExpenseRepository, ExpenseRepository>();
 
             // 4. Services
             services.AddScoped<IAuthService, AuthService>();
             services.AddScoped<IUserService, UserService>();
             services.AddScoped<IProjectService, ProjectService>();
             services.AddScoped<ITaskService, TaskService>();
+            services.AddScoped<IExpenseService, ExpenseService>();
 
             // 5. Forms
             services.AddTransient<frmLogin>();
@@ -7131,6 +7480,8 @@ namespace TaskFlowManagement.WinForms
             services.AddTransient<frmMyTasks>();
             // GD6: Dashboard Thống Kê
             services.AddTransient<frmDashboard>();
+            // GD8: Quản lý Chi phí
+            services.AddTransient<frmExpenses>();
             // frmTaskEdit KHÔNG đăng ký ở đây vì dùng `new` trực tiếp với tham số taskId runtime
 
             ServiceProvider = services.BuildServiceProvider();
@@ -9395,18 +9746,21 @@ namespace TaskFlowManagement.WinForms.Forms
     {
         private readonly ITaskService _taskService;
         private readonly IProjectService _projectService;
+        private readonly IExpenseService _expenseService;
         
         private DashboardStatsDto? _currentOverview = null;
         private List<ProgressReportDto> _currentProgress = new();
         private List<BudgetReportDto> _currentBudget = new();
+        private ProjectBudgetSummaryDto? _currentBudgetSummary = null;
         private int _hoverProgressIndex = -1;
 
-        public frmDashboard(ITaskService taskService, IProjectService projectService)
+        public frmDashboard(ITaskService taskService, IProjectService projectService, IExpenseService expenseService)
         {
-            InitializeComponent();
             _taskService = taskService;
             _projectService = projectService;
+            _expenseService = expenseService;
 
+            InitializeComponent();
             SetupUI();
         }
 
@@ -9441,6 +9795,16 @@ namespace TaskFlowManagement.WinForms.Forms
             cboProject.SelectedIndexChanged += async (s, e) => await LoadDashboardDataAsync();
             pnlProgressChart.MouseMove += PnlProgressChart_MouseMove;
             pnlProgressChart.MouseLeave += (s, e) => { _hoverProgressIndex = -1; pnlProgressChart.Invalidate(); };
+
+            // Phụ trách đồng bộ dữ liệu Realtime khi có thay đổi từ Task/Expense Service
+            _taskService.TaskDataChanged += async (s, e) => {
+                if (this.IsHandleCreated && !this.IsDisposed)
+                {
+                    this.BeginInvoke(new Action(async () => await LoadDashboardDataAsync()));
+                }
+            };
+            this.FormClosing += (s, e) => _taskService.TaskDataChanged -= async (s, e) => await LoadDashboardDataAsync(); // Cần cẩn thận với lambda anonymous!
+            // Sửa lại: Dùng method cụ thể để gỡ sự kiện chính xác.
 
             // Set DoubleBuffered
             EnableDoubleBuffer(pnlPieChart);
@@ -9541,14 +9905,20 @@ namespace TaskFlowManagement.WinForms.Forms
                 var task2 = _taskService.GetProgressReportAsync(projectId);
                 
                 Task<List<BudgetReportDto>>? task3 = null;
+                Task<ProjectBudgetSummaryDto?>? task4 = null;
+
                 if (AppSession.IsManager || AppSession.IsAdmin)
                 {
                     task3 = _taskService.GetBudgetReportAsync(projectId);
+                    if (projectId.HasValue)
+                        task4 = _expenseService.GetProjectBudgetSummaryAsync(projectId.Value);
                 }
 
                 _currentOverview = await task1;
                 _currentProgress = await task2;
                 if (task3 != null) _currentBudget = await task3;
+                if (task4 != null) _currentBudgetSummary = await task4;
+                else _currentBudgetSummary = null;
                 
                 RenderStatCards(_currentOverview);
                 
@@ -9571,8 +9941,18 @@ namespace TaskFlowManagement.WinForms.Forms
             pnlCards.Controls.Clear();
             pnlCards.Controls.Add(CreateCard("Tổng Công Việc", stats.TotalTasks.ToString(), "📁", UIHelper.ColorPrimary));
             pnlCards.Controls.Add(CreateCard("Đã Hoàn Thành", stats.CompletedTasks.ToString(), "✅", UIHelper.ColorSuccess));
-            pnlCards.Controls.Add(CreateCard("Sự Cố (Quá Hạn)", stats.OverdueTasks.ToString(), "🚩", Color.FromArgb(185, 28, 28))); // Đỏ đậm theo yêu cầu
-            pnlCards.Controls.Add(CreateCard("Tới Hạn (7 ngày)", stats.DueSoonTasks.ToString(), "⚠️", UIHelper.ColorWarning));
+            pnlCards.Controls.Add(CreateCard("Sự Cố (Quá Hạn)", stats.OverdueTasks.ToString(), "🚩", Color.FromArgb(185, 28, 28))); 
+            
+            if (_currentBudgetSummary != null)
+            {
+                Color budgetColor = _currentBudgetSummary.IsOverBudget ? UIHelper.ColorDanger : UIHelper.ColorSuccess;
+                string budgetVal = _currentBudgetSummary.Remaining.ToString("N0") + " ₫";
+                pnlCards.Controls.Add(CreateCard("Ngân Sách Còn Lại", budgetVal, "💰", budgetColor));
+            }
+            else
+            {
+                pnlCards.Controls.Add(CreateCard("Tới Hạn (7 ngày)", stats.DueSoonTasks.ToString(), "⚠️", UIHelper.ColorWarning));
+            }
         }
 
         private Panel CreateCard(string title, string value, string icon, Color accentColor)
@@ -10173,6 +10553,830 @@ namespace TaskFlowManagement.WinForms.Forms
         private System.Windows.Forms.Panel pnlPieChart;
         private System.Windows.Forms.Panel pnlProgressChart;
         private System.Windows.Forms.Panel pnlBudgetChart;
+    }
+}
+
+
+========================================
+--- FILE: frmExpenseEdit.cs ---
+========================================
+
+using TaskFlowManagement.Core.Entities;
+using TaskFlowManagement.Core.Interfaces.Services;
+using TaskFlowManagement.WinForms.Common;
+
+namespace TaskFlowManagement.WinForms.Forms
+{
+    public partial class frmExpenseEdit : BaseForm
+    {
+        private readonly IExpenseService _expenseService;
+        private readonly IProjectService _projectService;
+        private readonly Expense? _editingExpense;
+
+        public frmExpenseEdit(IExpenseService expenseService, IProjectService projectService, Expense? expense = null)
+        {
+            _expenseService = expenseService;
+            _projectService = projectService;
+            _editingExpense = expense;
+
+            InitializeComponent();
+            SetupUI();
+            WireEvents();
+        }
+
+        private void SetupUI()
+        {
+            if (_editingExpense != null)
+            {
+                lblTitleForm.Text = "✏️  Sửa chi phí";
+                this.Text = "Sửa chi phí";
+                btnSave.Text = "💾  Cập nhật chi phí";
+            }
+            else
+            {
+                lblTitleForm.Text = "➕  Thêm chi phí mới";
+                this.Text = "Thêm chi phí";
+                btnSave.Text = "💾  Lưu chi phí";
+                dtpDate.Value = DateTime.Today;
+            }
+        }
+
+        private void WireEvents()
+        {
+            this.Load += async (s, e) => {
+                await LoadProjectsAsync();
+                if (_editingExpense != null) BindData();
+            };
+
+            btnSave.Click += async (s, e) => await SaveAsync();
+            btnCancel.Click += (s, e) => this.Close();
+        }
+
+        private async Task LoadProjectsAsync()
+        {
+            try
+            {
+                var projects = await _projectService.GetProjectsForUserAsync(AppSession.UserId, AppSession.IsManager || AppSession.IsAdmin);
+                
+                cboProject.Items.Clear();
+                foreach (var p in projects)
+                {
+                    cboProject.Items.Add(new ComboItem(p.Id, p.Name));
+                }
+                
+                if (cboProject.Items.Count > 0) cboProject.SelectedIndex = 0;
+            }
+            catch (Exception ex)
+            {
+                lblError.Text = "Lỗi tải dự án: " + ex.Message;
+            }
+        }
+
+        private void BindData()
+        {
+            if (_editingExpense == null) return;
+
+            // Chọn dự án 
+            for (int i = 0; i < cboProject.Items.Count; i++)
+            {
+                if ((cboProject.Items[i] as ComboItem)?.Id == _editingExpense.ProjectId)
+                {
+                    cboProject.SelectedIndex = i;
+                    break;
+                }
+            }
+
+            // Chọn loại
+            cboType.SelectedItem = _editingExpense.ExpenseType;
+            
+            // Số tiền
+            numAmount.Value = _editingExpense.Amount;
+            
+            // Ngày
+            dtpDate.Value = _editingExpense.ExpenseDate.ToDateTime(TimeOnly.MinValue);
+            
+            // Ghi chú
+            txtNote.Text = _editingExpense.Note;
+        }
+
+        private async Task SaveAsync()
+        {
+            // 1. Validate
+            if (cboProject.SelectedItem == null) { ShowError("Vui lòng chọn dự án."); return; }
+            if (cboType.SelectedItem == null) { ShowError("Vui lòng chọn loại chi phí."); return; }
+            if (numAmount.Value <= 0) { ShowError("Số tiền phải lớn hơn 0."); return; }
+            if (dtpDate.Value.Date > DateTime.Today) { ShowError("Ngày chi phí không được lớn hơn ngày hiện tại."); return; }
+
+            lblError.Text = "";
+            btnSave.Enabled = false;
+
+            try
+            {
+                var expense = _editingExpense ?? new Expense();
+                expense.ProjectId = (cboProject.SelectedItem as ComboItem)!.Id;
+                expense.ExpenseType = cboType.SelectedItem.ToString()!;
+                expense.Amount = numAmount.Value;
+                expense.ExpenseDate = DateOnly.FromDateTime(dtpDate.Value);
+                expense.Note = txtNote.Text.Trim();
+
+                if (_editingExpense == null)
+                {
+                    // Audit Trail: Người tạo khoản chi
+                    expense.CreatedById = AppSession.UserId;
+                    var (ok, msg) = await _expenseService.AddExpenseAsync(expense);
+                    if (ok) { this.DialogResult = DialogResult.OK; this.Close(); }
+                    else ShowError(msg);
+                }
+                else
+                {
+                    var (ok, msg) = await _expenseService.UpdateExpenseAsync(expense);
+                    if (ok) { this.DialogResult = DialogResult.OK; this.Close(); }
+                    else ShowError(msg);
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowError("Lỗi hệ thống: " + ex.Message);
+            }
+            finally
+            {
+                btnSave.Enabled = true;
+            }
+        }
+
+        private void ShowError(string msg)
+        {
+            lblError.Text = "⚠️ " + msg;
+            System.Media.SystemSounds.Beep.Play();
+        }
+    }
+}
+
+
+========================================
+--- FILE: frmExpenseEdit.Designer.cs ---
+========================================
+
+using TaskFlowManagement.WinForms.Common;
+
+namespace TaskFlowManagement.WinForms.Forms
+{
+    partial class frmExpenseEdit
+    {
+        private System.ComponentModel.IContainer components = null;
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && (components != null))
+                components.Dispose();
+            base.Dispose(disposing);
+        }
+
+        private void InitializeComponent()
+        {
+            panelHeader = new Panel();
+            lblTitleForm = new Label();
+            panelAccentLine = new Panel();
+            panelBody = new Panel();
+            lblProject = new Label();
+            cboProject = new ComboBox();
+            lblType = new Label();
+            cboType = new ComboBox();
+            lblAmount = new Label();
+            numAmount = new NumericUpDown();
+            lblDate = new Label();
+            dtpDate = new DateTimePicker();
+            lblNote = new Label();
+            txtNote = new TextBox();
+            panelFooter = new Panel();
+            panelFooterLine = new Panel();
+            lblError = new Label();
+            btnSave = new Button();
+            btnCancel = new Button();
+
+            panelHeader.SuspendLayout();
+            panelBody.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)numAmount).BeginInit();
+            panelFooter.SuspendLayout();
+            this.SuspendLayout();
+
+            // panelHeader
+            panelHeader.BackColor = UIHelper.ColorHeaderBg;
+            panelHeader.Dock = DockStyle.Top;
+            panelHeader.Height = 64;
+            panelHeader.Controls.Add(lblTitleForm);
+            panelHeader.Controls.Add(panelAccentLine);
+
+            lblTitleForm.AutoSize = false;
+            lblTitleForm.Dock = DockStyle.Fill;
+            lblTitleForm.Font = new Font("Segoe UI", 13F, FontStyle.Bold);
+            lblTitleForm.ForeColor = UIHelper.ColorHeaderFg;
+            lblTitleForm.Padding = new Padding(18, 0, 0, 4);
+            lblTitleForm.Text = "➕  Thêm chi phí mới";
+            lblTitleForm.TextAlign = ContentAlignment.MiddleLeft;
+
+            panelAccentLine.BackColor = UIHelper.ColorPrimary;
+            panelAccentLine.Dock = DockStyle.Bottom;
+            panelAccentLine.Height = 4;
+
+            // panelBody
+            panelBody.BackColor = UIHelper.ColorBackground;
+            panelBody.Dock = DockStyle.Fill;
+            panelBody.Padding = new Padding(20);
+            panelBody.Controls.AddRange(new Control[] {
+                lblProject, cboProject, lblType, cboType,
+                lblAmount, numAmount, lblDate, dtpDate,
+                lblNote, txtNote
+            });
+
+            int y = 20, gap = 60, lx = 20, tw = 360;
+
+            SetLabel(lblProject, "DỰ ÁN *", lx, y);
+            StyleCombo(cboProject, lx, y + 20, tw, 1);
+
+            y += gap;
+            SetLabel(lblType, "LOẠI CHI PHÍ *", lx, y);
+            StyleCombo(cboType, lx, y + 20, tw, 2);
+            cboType.Items.AddRange(new object[] { "Nhân công", "Phần mềm", "Hạ tầng", "Khác" });
+
+            y += gap;
+            SetLabel(lblAmount, "SỐ TIỀN (VNĐ) *", lx, y);
+            numAmount.Location = new Point(lx, y + 20);
+            numAmount.Size = new Size( tw, 30);
+            numAmount.Maximum = 999999999999;
+            numAmount.ThousandsSeparator = true;
+            numAmount.Font = UIHelper.FontBase;
+            numAmount.TabIndex = 3;
+
+            y += gap;
+            SetLabel(lblDate, "NGÀY PHÁT SINH", lx, y);
+            dtpDate.Location = new Point(lx, y + 20);
+            dtpDate.Size = new Size(tw, 30);
+            dtpDate.Format = DateTimePickerFormat.Short;
+            dtpDate.Font = UIHelper.FontBase;
+            dtpDate.TabIndex = 4;
+
+            y += gap;
+            SetLabel(lblNote, "GHI CHÚ", lx, y);
+            txtNote.Location = new Point(lx, y + 20);
+            txtNote.Size = new Size(tw, 80);
+            txtNote.Multiline = true;
+            txtNote.Font = UIHelper.FontBase;
+            txtNote.BorderStyle = BorderStyle.FixedSingle;
+            txtNote.PlaceholderText = "Nhập ghi chú (nếu có)...";
+            txtNote.TabIndex = 5;
+
+            // panelFooter
+            panelFooter.BackColor = Color.White;
+            panelFooter.Dock = DockStyle.Bottom;
+            panelFooter.Height = 80;
+            panelFooter.Controls.AddRange(new Control[] { panelFooterLine, lblError, btnSave, btnCancel });
+
+            panelFooterLine.BackColor = UIHelper.ColorBorderLight;
+            panelFooterLine.Dock = DockStyle.Top;
+            panelFooterLine.Height = 1;
+
+            lblError.ForeColor = UIHelper.ColorDanger;
+            lblError.Font = UIHelper.FontSmall;
+            lblError.Location = new Point(20, 6);
+            lblError.Size = new Size(400, 20);
+            lblError.Text = "";
+
+            UIHelper.StyleButton(btnSave, UIHelper.ButtonVariant.Primary);
+            btnSave.Location = new Point(20, 28);
+            btnSave.Size = new Size(250, 40);
+            btnSave.Text = "💾  Lưu chi phí";
+
+            UIHelper.StyleButton(btnCancel, UIHelper.ButtonVariant.Secondary);
+            btnCancel.Location = new Point(280, 28);
+            btnCancel.Size = new Size(100, 40);
+            btnCancel.Text = "Hủy";
+
+            // Form
+            this.ClientSize = new Size(420, 520);
+            this.FormBorderStyle = FormBorderStyle.FixedDialog;
+            this.MaximizeBox = false;
+            this.MinimizeBox = false;
+            this.Name = "frmExpenseEdit";
+            this.StartPosition = FormStartPosition.CenterParent;
+            this.Text = "Chi tiết chi phí";
+
+            this.Controls.Add(panelBody);
+            this.Controls.Add(panelFooter);
+            this.Controls.Add(panelHeader);
+
+            panelHeader.ResumeLayout(false);
+            panelBody.ResumeLayout(false);
+            panelBody.PerformLayout();
+            ((System.ComponentModel.ISupportInitialize)numAmount).EndInit();
+            panelFooter.ResumeLayout(false);
+            this.ResumeLayout(false);
+        }
+
+        private static void SetLabel(Label lbl, string text, int x, int y)
+        {
+            lbl.AutoSize = true;
+            lbl.Font = UIHelper.FontLabel;
+            lbl.Location = new Point(x, y);
+            lbl.Text = text;
+        }
+
+        private static void StyleCombo(ComboBox cbo, int x, int y, int w, int tabIdx)
+        {
+            cbo.DropDownStyle = ComboBoxStyle.DropDownList;
+            cbo.Font = UIHelper.FontBase;
+            cbo.Location = new Point(x, y);
+            cbo.Size = new Size(w, 30);
+            cbo.TabIndex = tabIdx;
+        }
+
+        private Panel panelHeader, panelAccentLine, panelBody, panelFooter, panelFooterLine;
+        private Label lblTitleForm, lblError, lblProject, lblType, lblAmount, lblDate, lblNote;
+        private ComboBox cboProject, cboType;
+        private NumericUpDown numAmount;
+        private DateTimePicker dtpDate;
+        private TextBox txtNote;
+        private Button btnSave, btnCancel;
+    }
+}
+
+
+========================================
+--- FILE: frmExpenses.cs ---
+========================================
+
+using TaskFlowManagement.Core.Entities;
+using TaskFlowManagement.Core.DTOs;
+using TaskFlowManagement.Core.Interfaces.Services;
+using TaskFlowManagement.WinForms.Common;
+
+namespace TaskFlowManagement.WinForms.Forms
+{
+    public partial class frmExpenses : BaseForm
+    {
+        private readonly IExpenseService _expenseService;
+        private readonly IProjectService _projectService;
+
+        private List<Expense> _allExpenses = new();
+        private Expense? _selectedExpense = null;
+
+        public frmExpenses(IExpenseService expenseService, IProjectService projectService)
+        {
+            _expenseService = expenseService;
+            _projectService = projectService;
+            InitializeComponent();
+            SetupPermissions();
+            WireEvents();
+        }
+
+        private void SetupPermissions()
+        {
+            // Chỉ Manager/Admin mới được thêm/sửa/xóa chi phí
+            bool canEdit = AppSession.IsManager || AppSession.IsAdmin;
+            btnAdd.Visible = canEdit;
+            btnEdit.Visible = canEdit;
+            btnDelete.Visible = canEdit;
+        }
+
+        private void WireEvents()
+        {
+            this.Load += async (s, e) => {
+                await LoadProjectsAsync();
+                await LoadExpensesAsync();
+            };
+
+            cboProject.SelectedIndexChanged += async (s, e) => await LoadExpensesAsync();
+            cboExpenseType.SelectedIndexChanged += (s, e) => ApplyFilter();
+            btnRefresh.Click += async (s, e) => await LoadExpensesAsync();
+
+            dgvExpenses.SelectionChanged += (s, e) => {
+                if (dgvExpenses.SelectedRows.Count > 0) {
+                    int id = (int)dgvExpenses.SelectedRows[0].Cells["colId"].Value;
+                    _selectedExpense = _allExpenses.FirstOrDefault(x => x.Id == id);
+                } else {
+                    _selectedExpense = null;
+                }
+                UpdateButtons();
+            };
+
+            btnAdd.Click += async (s, e) => await OpenEditForm(null);
+            btnEdit.Click += async (s, e) => await OpenEditForm(_selectedExpense);
+            btnDelete.Click += async (s, e) => await DeleteExpenseAsync();
+            btnDetail.Click += (s, e) => ShowDetail();
+        }
+
+        private void UpdateButtons()
+        {
+            bool hasSelection = _selectedExpense != null;
+            btnEdit.Enabled = hasSelection;
+            btnDelete.Enabled = hasSelection;
+            btnDetail.Enabled = hasSelection;
+        }
+
+        private async Task LoadProjectsAsync()
+        {
+            try
+            {
+                var projects = await _projectService.GetProjectsForUserAsync(AppSession.UserId, AppSession.IsManager || AppSession.IsAdmin);
+                
+                cboProject.Items.Clear();
+                cboProject.Items.Add(new ComboItem(0, "-- Tất cả dự án --"));
+                
+                foreach (var p in projects)
+                {
+                    cboProject.Items.Add(new ComboItem(p.Id, p.Name));
+                }
+                
+                cboProject.SelectedIndex = 0;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Lỗi tải dự án: {ex.Message}", "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private async Task LoadExpensesAsync()
+        {
+            SetStatus("⏳ Đang tải dữ liệu...");
+            try
+            {
+                int projectId = (cboProject.SelectedItem as ComboItem)?.Id ?? 0;
+                
+                if (projectId > 0)
+                {
+                    _allExpenses = await _expenseService.GetByProjectAsync(projectId);
+                    var summary = await _expenseService.GetProjectBudgetSummaryAsync(projectId);
+                    UpdateSummaryCard(summary);
+                }
+                else
+                {
+                    // Nếu chọn "Tất cả", ta có thể load hết (Admin) hoặc chỉ load các dự án mà user là member
+                    // Ở đây để đơn giản ta load những chi phí thuộc các dự án user có quyền xem
+                    var projects = await _projectService.GetProjectsForUserAsync(AppSession.UserId, AppSession.IsManager || AppSession.IsAdmin);
+                    _allExpenses = new List<Expense>();
+                    foreach(var p in projects)
+                    {
+                        var pExpenses = await _expenseService.GetByProjectAsync(p.Id);
+                        _allExpenses.AddRange(pExpenses);
+                    }
+                    _allExpenses = _allExpenses.OrderByDescending(x => x.ExpenseDate).ToList();
+                    UpdateSummaryCard(null); // Không hiện card cho "Tất cả" hoặc tính tổng hợp? 
+                                             // Theo plan: hiện card khi chọn project đơn lẻ.
+                }
+
+                ApplyFilter();
+                SetStatus($"✅ Đã tải {_allExpenses.Count} bản ghi.");
+            }
+            catch (Exception ex)
+            {
+                SetStatus("❌ Lỗi tải dữ liệu.");
+                MessageBox.Show(ex.Message, "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void UpdateSummaryCard(ProjectBudgetSummaryDto? summary)
+        {
+            if (summary == null)
+            {
+                lblBudgetVal.Text = "—";
+                lblTotalExpenseVal.Text = "—";
+                lblRemainingVal.Text = "—";
+                lblUsagePct.Text = "0%";
+                lblUsagePct.ForeColor = UIHelper.ColorMuted;
+                return;
+            }
+
+            lblBudgetVal.Text = summary.Budget.ToString("N0") + " ₫";
+            lblTotalExpenseVal.Text = summary.TotalExpense.ToString("N0") + " ₫";
+            lblRemainingVal.Text = summary.Remaining.ToString("N0") + " ₫";
+            lblUsagePct.Text = summary.UsagePercent.ToString("N0") + "%";
+
+            // Màu sắc cảnh báo
+            if (summary.IsOverBudget)
+            {
+                lblTotalExpenseVal.ForeColor = UIHelper.ColorDanger;
+                lblRemainingVal.ForeColor = UIHelper.ColorDanger;
+                lblUsagePct.ForeColor = UIHelper.ColorDanger;
+            }
+            else if (summary.UsagePercent > 80)
+            {
+                lblTotalExpenseVal.ForeColor = UIHelper.ColorWarning;
+                lblRemainingVal.ForeColor = UIHelper.ColorWarning;
+                lblUsagePct.ForeColor = UIHelper.ColorWarning;
+            }
+            else
+            {
+                lblTotalExpenseVal.ForeColor = UIHelper.ColorHeaderBg;
+                lblRemainingVal.ForeColor = UIHelper.ColorSuccess;
+                lblUsagePct.ForeColor = UIHelper.ColorMuted;
+            }
+        }
+
+        private void ApplyFilter()
+        {
+            string typeFilter = cboExpenseType.SelectedItem?.ToString() ?? "— Tất cả —";
+            
+            var filtered = _allExpenses.Where(x => 
+                typeFilter == "— Tất cả —" || x.ExpenseType == typeFilter
+            ).ToList();
+
+            BindGrid(filtered);
+        }
+
+        private void BindGrid(List<Expense> list)
+        {
+            dgvExpenses.Rows.Clear();
+            foreach (var e in list)
+            {
+                dgvExpenses.Rows.Add(
+                    e.Id,
+                    e.Project?.Name ?? "—",
+                    e.ExpenseType,
+                    e.Amount.ToString("N0") + " ₫",
+                    e.ExpenseDate.ToString("dd/MM/yyyy"),
+                    e.Note ?? "—",
+                    e.CreatedBy?.FullName ?? "Hệ thống"
+                );
+            }
+            lblCount.Text = $"Tổng số: {list.Count} khoản chi.";
+        }
+
+        private async Task OpenEditForm(Expense? expense)
+        {
+            // Chúng ta sẽ triển khai frmExpenseEdit sau
+            using var dlg = new frmExpenseEdit(_expenseService, _projectService, expense);
+            if (dlg.ShowDialog(this) == DialogResult.OK)
+            {
+                await LoadExpensesAsync();
+                // Trigger dashboard update
+                // (Giả sử có event TaskDataChanged như plan) 
+                // Ở đây ta cứ load lại là được.
+            }
+        }
+
+        private async Task DeleteExpenseAsync()
+        {
+            if (_selectedExpense == null) return;
+
+            if (MessageBox.Show($"Xác nhận xóa khoản chi {(_selectedExpense.Amount.ToString("N0"))} ₫ cho dự án {_selectedExpense.Project?.Name}?", 
+                "Xác nhận", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+            {
+                var (ok, msg) = await _expenseService.DeleteExpenseAsync(_selectedExpense.Id);
+                if (ok) await LoadExpensesAsync();
+                else MessageBox.Show(msg, "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void ShowDetail()
+        {
+            if (_selectedExpense == null) return;
+            
+            string info = $"Dự án: {_selectedExpense.Project?.Name}\n" +
+                          $"Loại: {_selectedExpense.ExpenseType}\n" +
+                          $"Số tiền: {_selectedExpense.Amount:N0} ₫\n" +
+                          $"Ngày: {_selectedExpense.ExpenseDate:dd/MM/yyyy}\n" +
+                          $"Người tạo: {_selectedExpense.CreatedBy?.FullName}\n" +
+                          $"Ghi chú: {_selectedExpense.Note ?? "—"}";
+            
+            MessageBox.Show(info, "Chi tiết chi phí", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void SetStatus(string msg) => lblStatus.Text = msg;
+    }
+}
+
+
+========================================
+--- FILE: frmExpenses.Designer.cs ---
+========================================
+
+using TaskFlowManagement.WinForms.Common;
+
+namespace TaskFlowManagement.WinForms.Forms
+{
+    partial class frmExpenses
+    {
+        private System.ComponentModel.IContainer components = null;
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && (components != null))
+                components.Dispose();
+            base.Dispose(disposing);
+        }
+
+        private void InitializeComponent()
+        {
+            panelHeader = new Panel();
+            lblHeader = new Label();
+            panelFilter = new Panel();
+            lblProjectFilter = new Label();
+            cboProject = new ComboBox();
+            lblTypeFilter = new Label();
+            cboExpenseType = new ComboBox();
+            btnRefresh = new Button();
+            panelSummary = new Panel();
+            pnlSummaryCard = new Panel();
+            lblUsagePct = new Label();
+            lblRemainingVal = new Label();
+            lblTotalExpenseVal = new Label();
+            lblBudgetVal = new Label();
+            lblRemainingTitle = new Label();
+            lblTotalExpenseTitle = new Label();
+            lblBudgetTitle = new Label();
+            panelToolbar = new Panel();
+            btnAdd = new Button();
+            btnEdit = new Button();
+            btnDelete = new Button();
+            btnDetail = new Button();
+            lblCount = new Label();
+            dgvExpenses = new DataGridView();
+            colId = new DataGridViewTextBoxColumn();
+            colProject = new DataGridViewTextBoxColumn();
+            colType = new DataGridViewTextBoxColumn();
+            colAmount = new DataGridViewTextBoxColumn();
+            colDate = new DataGridViewTextBoxColumn();
+            colNote = new DataGridViewTextBoxColumn();
+            colCreatedBy = new DataGridViewTextBoxColumn();
+            panelStatus = new Panel();
+            lblStatus = new Label();
+
+            panelHeader.SuspendLayout();
+            panelFilter.SuspendLayout();
+            panelSummary.SuspendLayout();
+            pnlSummaryCard.SuspendLayout();
+            panelToolbar.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)dgvExpenses).BeginInit();
+            this.SuspendLayout();
+
+            // panelHeader
+            panelHeader.BackColor = UIHelper.ColorHeaderBg;
+            panelHeader.Dock = DockStyle.Top;
+            panelHeader.Height = 58;
+            panelHeader.Controls.Add(lblHeader);
+
+            lblHeader.AutoSize = false;
+            lblHeader.Font = UIHelper.FontHeaderLarge;
+            lblHeader.ForeColor = UIHelper.ColorHeaderFg;
+            lblHeader.Location = new Point(20, 14);
+            lblHeader.Size = new Size(700, 30);
+            lblHeader.Text = "💸  Quản lý Chi phí & Ngân sách";
+
+            // panelFilter
+            panelFilter.BackColor = UIHelper.ColorBackground;
+            panelFilter.Dock = DockStyle.Top;
+            panelFilter.Height = 46;
+            panelFilter.Controls.AddRange(new Control[] { lblProjectFilter, cboProject, lblTypeFilter, cboExpenseType, btnRefresh });
+
+            lblProjectFilter.AutoSize = true;
+            lblProjectFilter.Font = UIHelper.FontLabel;
+            lblProjectFilter.Location = new Point(14, 15);
+            lblProjectFilter.Text = "Dự án:";
+
+            cboProject.Location = new Point(65, 11);
+            cboProject.Size = new Size(220, 26);
+            UIHelper.StyleFilterCombo(cboProject);
+
+            lblTypeFilter.AutoSize = true;
+            lblTypeFilter.Font = UIHelper.FontLabel;
+            lblTypeFilter.Location = new Point(300, 15);
+            lblTypeFilter.Text = "Loại:";
+
+            cboExpenseType.Location = new Point(340, 11);
+            cboExpenseType.Size = new Size(160, 26);
+            UIHelper.StyleFilterCombo(cboExpenseType);
+            cboExpenseType.Items.AddRange(new object[] { "— Tất cả —", "Nhân công", "Phần mềm", "Hạ tầng", "Khác" });
+            cboExpenseType.SelectedIndex = 0;
+
+            btnRefresh.Location = new Point(515, 11);
+            btnRefresh.Size = new Size(110, 26);
+            UIHelper.StyleButton(btnRefresh, UIHelper.ButtonVariant.Secondary);
+            btnRefresh.Text = "🔄 Làm mới";
+
+            // panelSummary (Budget Card)
+            panelSummary.BackColor = UIHelper.ColorBackground;
+            panelSummary.Dock = DockStyle.Top;
+            panelSummary.Height = 100;
+            panelSummary.Controls.Add(pnlSummaryCard);
+
+            pnlSummaryCard.BackColor = UIHelper.ColorSurface;
+            pnlSummaryCard.Location = new Point(14, 10);
+            pnlSummaryCard.Size = new Size(970, 80);
+            pnlSummaryCard.BorderStyle = BorderStyle.FixedSingle;
+            pnlSummaryCard.Controls.AddRange(new Control[] { 
+                lblUsagePct, lblRemainingVal, lblTotalExpenseVal, lblBudgetVal, 
+                lblRemainingTitle, lblTotalExpenseTitle, lblBudgetTitle 
+            });
+
+            lblBudgetTitle.Font = UIHelper.FontLabel;
+            lblBudgetTitle.ForeColor = UIHelper.ColorMuted;
+            lblBudgetTitle.Location = new Point(20, 15);
+            lblBudgetTitle.Text = "NGÂN SÁCH";
+            lblBudgetTitle.Size = new Size(150, 20);
+
+            lblBudgetVal.Font = UIHelper.FontHeaderLarge;
+            lblBudgetVal.ForeColor = UIHelper.ColorPrimary;
+            lblBudgetVal.Location = new Point(20, 35);
+            lblBudgetVal.Text = "0 ₫";
+            lblBudgetVal.Size = new Size(200, 30);
+
+            lblTotalExpenseTitle.Font = UIHelper.FontLabel;
+            lblTotalExpenseTitle.ForeColor = UIHelper.ColorMuted;
+            lblTotalExpenseTitle.Location = new Point(250, 15);
+            lblTotalExpenseTitle.Text = "TỔNG CHI PHÍ";
+            lblTotalExpenseTitle.Size = new Size(150, 20);
+
+            lblTotalExpenseVal.Font = UIHelper.FontHeaderLarge;
+            lblTotalExpenseVal.ForeColor = UIHelper.ColorHeaderBg;
+            lblTotalExpenseVal.Location = new Point(250, 35);
+            lblTotalExpenseVal.Text = "0 ₫";
+            lblTotalExpenseVal.Size = new Size(200, 30);
+
+            lblRemainingTitle.Font = UIHelper.FontLabel;
+            lblRemainingTitle.ForeColor = UIHelper.ColorMuted;
+            lblRemainingTitle.Location = new Point(500, 15);
+            lblRemainingTitle.Text = "CÒN LẠI";
+            lblRemainingTitle.Size = new Size(150, 20);
+
+            lblRemainingVal.Font = UIHelper.FontHeaderLarge;
+            lblRemainingVal.ForeColor = UIHelper.ColorSuccess;
+            lblRemainingVal.Location = new Point(500, 35);
+            lblRemainingVal.Text = "0 ₫";
+            lblRemainingVal.Size = new Size(200, 30);
+
+            lblUsagePct.Font = new Font("Segoe UI", 18F, FontStyle.Bold);
+            lblUsagePct.ForeColor = UIHelper.ColorMuted;
+            lblUsagePct.Location = new Point(780, 15);
+            lblUsagePct.Text = "0%";
+            lblUsagePct.Size = new Size(160, 50);
+            lblUsagePct.TextAlign = ContentAlignment.MiddleRight;
+
+            // panelToolbar
+            panelToolbar.BackColor = UIHelper.ColorSurface;
+            panelToolbar.Dock = DockStyle.Top;
+            panelToolbar.Height = 52;
+            panelToolbar.Controls.AddRange(new Control[] { btnAdd, btnEdit, btnDelete, btnDetail, lblCount });
+
+            int bx = 14, by = 9, bg = 6, bh = 34;
+            UIHelper.StyleToolButton(btnAdd, "➕ Thêm chi phí", UIHelper.ButtonVariant.Primary, bx, by, 140, bh); bx += 140 + bg;
+            UIHelper.StyleToolButton(btnEdit, "✏️ Sửa", UIHelper.ButtonVariant.Success, bx, by, 80, bh); bx += 80 + bg;
+            UIHelper.StyleToolButton(btnDelete, "🗑️ Xóa", UIHelper.ButtonVariant.Danger, bx, by, 80, bh); bx += 80 + bg;
+            UIHelper.StyleToolButton(btnDetail, "📋 Chi tiết", UIHelper.ButtonVariant.Slate, bx, by, 100, bh); bx += 100 + bg;
+
+            lblCount.AutoSize = false;
+            lblCount.Font = UIHelper.FontSmall;
+            lblCount.ForeColor = UIHelper.ColorMuted;
+            lblCount.Location = new Point(bx, by);
+            lblCount.Size = new Size(200, bh);
+            lblCount.TextAlign = ContentAlignment.MiddleLeft;
+
+            // dgvExpenses
+            UIHelper.StyleDataGridView(dgvExpenses);
+            UIHelper.ApplyAlternateRowColors(dgvExpenses);
+            dgvExpenses.Dock = DockStyle.Fill;
+
+            colId.Name = "colId"; colId.Visible = false;
+            colProject.Name = "colProject"; colProject.HeaderText = "Dự án"; colProject.Width = 180;
+            colType.Name = "colType"; colType.HeaderText = "Loại chi phí"; colType.Width = 140;
+            colAmount.Name = "colAmount"; colAmount.HeaderText = "Số tiền"; colAmount.Width = 140;
+            colDate.Name = "colDate"; colDate.HeaderText = "Ngày"; colDate.Width = 100;
+            colNote.Name = "colNote"; colNote.HeaderText = "Ghi chú"; colNote.Width = 250;
+            colCreatedBy.Name = "colCreatedBy"; colCreatedBy.HeaderText = "Người tạo"; colCreatedBy.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+
+            dgvExpenses.Columns.AddRange(new DataGridViewColumn[] { colId, colProject, colType, colAmount, colDate, colNote, colCreatedBy });
+
+            // Status Bar
+            (panelStatus, lblStatus) = UIHelper.CreateStatusBar();
+
+            // Form properties
+            this.ClientSize = new Size(1000, 700);
+            this.Name = "frmExpenses";
+            this.Text = "Quản lý Chi phí & Ngân sách";
+            this.StartPosition = FormStartPosition.CenterParent;
+
+            this.Controls.Add(dgvExpenses);
+            this.Controls.Add(panelStatus);
+            this.Controls.Add(panelToolbar);
+            this.Controls.Add(panelSummary);
+            this.Controls.Add(panelFilter);
+            this.Controls.Add(panelHeader);
+
+            panelHeader.ResumeLayout(false);
+            panelFilter.ResumeLayout(false);
+            panelFilter.PerformLayout();
+            panelSummary.ResumeLayout(false);
+            pnlSummaryCard.ResumeLayout(false);
+            panelToolbar.ResumeLayout(false);
+            ((System.ComponentModel.ISupportInitialize)dgvExpenses).EndInit();
+            this.ResumeLayout(false);
+        }
+
+        private Panel panelHeader, panelFilter, panelSummary, pnlSummaryCard, panelToolbar, panelStatus;
+        private Label lblHeader, lblProjectFilter, lblTypeFilter, lblBudgetTitle, lblBudgetVal, lblTotalExpenseTitle, lblTotalExpenseVal, lblRemainingTitle, lblRemainingVal, lblUsagePct, lblCount, lblStatus;
+        private ComboBox cboProject, cboExpenseType;
+        private Button btnRefresh, btnAdd, btnEdit, btnDelete, btnDetail;
+        private DataGridView dgvExpenses;
+        private DataGridViewTextBoxColumn colId, colProject, colType, colAmount, colDate, colNote, colCreatedBy;
     }
 }
 
@@ -12280,6 +13484,7 @@ namespace TaskFlowManagement.WinForms.Forms
             menuProjects.Visible     = true;
             menuReports.Visible      = true;
             menuTaskList.Visible     = true;
+            menuExpenses.Visible     = true;
             menuKanban.Visible       = true;
             menuUserAccounts.Visible = true;
 
@@ -12410,6 +13615,10 @@ namespace TaskFlowManagement.WinForms.Forms
         private void menuMyTasks_Click(object sender, EventArgs e)
             => OpenMdiChild(_serviceProvider.GetRequiredService<frmMyTasks>());
 
+        // ── Menu: Chi phí (Giai đoạn 8) ───────────────────────
+        private void menuExpenseList_Click(object sender, EventArgs e)
+            => OpenMdiChild(_serviceProvider.GetRequiredService<frmExpenses>());
+
         // ── Menu: Báo cáo (Giai đoạn 6) ───────────────────────
         private void OpenDashboardTab(int index)
         {
@@ -12481,6 +13690,7 @@ namespace TaskFlowManagement.WinForms.Forms
             this.menuCustomers = new System.Windows.Forms.ToolStripMenuItem();
             this.menuProjects  = new System.Windows.Forms.ToolStripMenuItem();
             this.menuTasks     = new System.Windows.Forms.ToolStripMenuItem();
+            this.menuExpenses  = new System.Windows.Forms.ToolStripMenuItem();
             this.menuReports   = new System.Windows.Forms.ToolStripMenuItem();
 
             // Menu System children
@@ -12512,6 +13722,9 @@ namespace TaskFlowManagement.WinForms.Forms
             this.menuReportProgress = new System.Windows.Forms.ToolStripMenuItem();
             this.menuReportBudget   = new System.Windows.Forms.ToolStripMenuItem();
 
+            // Menu Expenses children
+            this.menuExpenseList    = new System.Windows.Forms.ToolStripMenuItem();
+
             this.menuStrip.SuspendLayout();
             this.statusStrip.SuspendLayout();
             this.SuspendLayout();
@@ -12529,6 +13742,7 @@ namespace TaskFlowManagement.WinForms.Forms
                 this.menuCustomers,
                 this.menuProjects,
                 this.menuTasks,
+                this.menuExpenses,
                 this.menuReports
             });
             this.menuStrip.Location = new System.Drawing.Point(0, 0);
@@ -12654,6 +13868,21 @@ namespace TaskFlowManagement.WinForms.Forms
             this.menuMyTasks.Text   = "📌  Công việc của tôi";
             this.menuMyTasks.Click += new System.EventHandler(this.menuMyTasks_Click);
 
+            // ---- menuExpenses ----
+            this.menuExpenses.BackColor = System.Drawing.Color.FromArgb(15, 23, 42);
+            this.menuExpenses.ForeColor = System.Drawing.Color.FromArgb(226, 232, 240);
+            this.menuExpenses.Name      = "menuExpenses";
+            this.menuExpenses.Padding   = new System.Windows.Forms.Padding(8, 0, 8, 0);
+            this.menuExpenses.Text      = "💸  Chi phí";
+            this.menuExpenses.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[]
+            {
+                this.menuExpenseList
+            });
+
+            this.menuExpenseList.Name   = "menuExpenseList";
+            this.menuExpenseList.Text   = "Quản lý chi phí & Ngân sách";
+            this.menuExpenseList.Click += new System.EventHandler(this.menuExpenseList_Click);
+
             // ---- menuReports ----
             this.menuReports.BackColor = System.Drawing.Color.FromArgb(15, 23, 42);
             this.menuReports.ForeColor = System.Drawing.Color.FromArgb(226, 232, 240);
@@ -12766,6 +13995,8 @@ namespace TaskFlowManagement.WinForms.Forms
         private System.Windows.Forms.ToolStripMenuItem menuTaskList;
         private System.Windows.Forms.ToolStripMenuItem menuKanban;
         private System.Windows.Forms.ToolStripMenuItem menuMyTasks;
+        private System.Windows.Forms.ToolStripMenuItem menuExpenses;
+        private System.Windows.Forms.ToolStripMenuItem menuExpenseList;
         private System.Windows.Forms.ToolStripMenuItem menuDashboard;
         private System.Windows.Forms.ToolStripMenuItem menuReportProgress;
         private System.Windows.Forms.ToolStripMenuItem menuReportBudget;
@@ -17503,7 +18734,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TaskFlowManagement.WinForms")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+bdcf554a47a2f5bb9084ac3c6ffee734f2e9ddca")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+528360b3ff049cd7162e7d36fb3f2d819e5bb27b")]
 [assembly: System.Reflection.AssemblyProductAttribute("TaskFlowManagement.WinForms")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TaskFlowManagement.WinForms")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
@@ -17560,7 +18791,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TaskFlowManagement.WinForms")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+21475b85ea8b4e7a8954939c989347ca129bdafe")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+528360b3ff049cd7162e7d36fb3f2d819e5bb27b")]
 [assembly: System.Reflection.AssemblyProductAttribute("TaskFlowManagement.WinForms")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TaskFlowManagement.WinForms")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -21,6 +21,12 @@ namespace TaskFlowManagement.Core.Interfaces.Services
         /// </summary>
         event EventHandler TaskDataChanged;
 
+        /// <summary>
+        /// Kích hoạt sự kiện TaskDataChanged thủ công từ bên ngoài (e.g. từ ExpenseService).
+        /// Giúp Dashboard nhận biết cần load lại dữ liệu.
+        /// </summary>
+        void NotifyDataChanged();
+
         // ── Truy vấn đơn ─────────────────────────────────────────
 
         /// <summary>

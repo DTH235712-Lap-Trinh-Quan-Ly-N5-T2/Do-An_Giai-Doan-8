@@ -49,7 +49,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
             _attachmentRepo = attachmentRepo ?? throw new ArgumentNullException(nameof(attachmentRepo));
         }
 
-        private void NotifyTaskDataChanged()
+        public void NotifyDataChanged()
         {
             TaskDataChanged?.Invoke(this, EventArgs.Empty);
         }
@@ -143,7 +143,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
                 ? null : task.Description.Trim();
 
             await _taskRepo.AddAsync(task);
-            NotifyTaskDataChanged();
+            NotifyDataChanged();
             return (true, $"Đã tạo công việc \"{task.Title}\" thành công.");
         }
 
@@ -174,7 +174,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
             try
             {
                 await _taskRepo.UpdateAsync(task); // ← Một lần duy nhất, đúng hoàn toàn
-                NotifyTaskDataChanged();
+                NotifyDataChanged();
                 return (true, "Cập nhật công việc thành công.");
             }
             catch (Exception ex)
@@ -206,7 +206,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
             } 
             catch { /* Ignore if it fails during cleanup */ }
 
-            NotifyTaskDataChanged();
+            NotifyDataChanged();
             return (true, $"Đã xóa công việc \"{task.Title}\".");
         }
 
@@ -222,7 +222,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
             if (progress > 100)
                 return (false, "Tiến độ phải từ 0 đến 100.");
             await _taskRepo.UpdateProgressAsync(taskId, progress, ResolvedStatusId);
-            NotifyTaskDataChanged();
+            NotifyDataChanged();
 
             return progress == 100
                 ? (true, "🎉 Công việc đã hoàn thành! Trạng thái chuyển sang RESOLVED.")
@@ -265,7 +265,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
             if (isManagerOrAbove)
             {
                 await _taskRepo.UpdateStatusAsync(taskId, statusId);
-                NotifyTaskDataChanged();
+                NotifyDataChanged();
                 return (true, $"Đã chuyển trạng thái sang \"{WorkflowConstants.GetStatusName(statusId)}\".");
             }
 
@@ -279,7 +279,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
                     "Liên hệ Manager nếu cần thay đổi task khác.");
 
             await _taskRepo.UpdateStatusAsync(taskId, statusId);
-            NotifyTaskDataChanged();
+            NotifyDataChanged();
             return (true, $"Đã chuyển trạng thái sang \"{WorkflowConstants.GetStatusName(statusId)}\".");
         }
 
@@ -342,7 +342,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
             if (testerId.HasValue)    parts.Add("Tester");
 
             var extra = parts.Count > 0 ? $" — đã gán {string.Join(", ", parts)}" : string.Empty;
-            NotifyTaskDataChanged();
+            NotifyDataChanged();
             return (true, $"Chuyển sang {newStatus}{extra} thành công.");
         }
 
@@ -404,7 +404,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
              // Get full data to return to UI (including user info)
              var addedComment = await _commentRepo.GetByIdAsync(comment.Id);
              
-             NotifyTaskDataChanged();
+             NotifyDataChanged();
              return (true, "Thêm bình luận thành công.", addedComment);
         }
 
@@ -468,7 +468,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
 
             var addedAttachment = await _attachmentRepo.GetByIdAsync(attachment.Id);
 
-            NotifyTaskDataChanged();
+            NotifyDataChanged();
             return (true, "Tải tệp thành công.", addedAttachment);
         }
 
@@ -502,7 +502,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
              }
 
              await _attachmentRepo.DeleteAsync(attachmentId);
-             NotifyTaskDataChanged();
+             NotifyDataChanged();
 
              return (true, "Đã xóa file đính kèm.");
         }
