@@ -54,9 +54,8 @@ namespace TaskFlowManagement.Core.Services.Auth
             // --- Bước 5: Map → DTO (không trả User entity thô ra ngoài Service) ---
             var dto = UserSessionMapper.ToDto(userWithRoles);
 
-            // --- Bước 6: Cập nhật LastLogin (fire-and-forget, không await) ---
-            // _ = bỏ qua Task trả về, không block thread UI
-            _ = _userRepo.UpdateLastLoginAsync(user.Id);
+            // --- Bước 6: Cập nhật LastLogin (Đã chuyển sang await để tránh ObjectDisposedException) ---
+            await _userRepo.UpdateLastLoginAsync(user.Id);
 
             return LoginResult.Ok(dto);
         }

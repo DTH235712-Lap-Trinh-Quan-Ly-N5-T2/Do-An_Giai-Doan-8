@@ -208,29 +208,87 @@ namespace TaskFlowManagement.WinForms.Forms
         private void RenderStatCards(DashboardStatsDto stats)
         {
             pnlCards.Controls.Clear();
-            pnlCards.Controls.Add(CreateCard("Tổng Công Việc", stats.TotalTasks.ToString(), "📁", UIHelper.ColorPrimary));
-            pnlCards.Controls.Add(CreateCard("Đã Hoàn Thành", stats.CompletedTasks.ToString(), "✅", UIHelper.ColorSuccess));
-            pnlCards.Controls.Add(CreateCard("Sự Cố (Quá Hạn)", stats.OverdueTasks.ToString(), "🚩", Color.FromArgb(185, 28, 28))); 
+            pnlCards.Controls.Add(CreateCard("Tổng Công Việc", stats.TotalTasks.ToString(), "📁", UIHelper.ColorPrimary, "ALL"));
+            pnlCards.Controls.Add(CreateCard("Đã Hoàn Thành", stats.CompletedTasks.ToString(), "✅", UIHelper.ColorSuccess, "COMPLETED"));
+            pnlCards.Controls.Add(CreateCard("Sự Cố (Quá Hạn)", stats.OverdueTasks.ToString(), "🚩", Color.FromArgb(185, 28, 28), "OVERDUE")); 
             
             if (_currentBudgetSummary != null)
             {
                 Color budgetColor = _currentBudgetSummary.IsOverBudget ? UIHelper.ColorDanger : UIHelper.ColorSuccess;
                 string budgetVal = _currentBudgetSummary.Remaining.ToString("N0") + " ₫";
-                pnlCards.Controls.Add(CreateCard("Ngân Sách Còn Lại", budgetVal, "💰", budgetColor));
+                pnlCards.Controls.Add(CreateCard("Ngân Sách Còn Lại", budgetVal, "💰", budgetColor, "BUDGET"));
             }
             else
             {
-                pnlCards.Controls.Add(CreateCard("Tới Hạn (7 ngày)", stats.DueSoonTasks.ToString(), "⚠️", UIHelper.ColorWarning));
+                pnlCards.Controls.Add(CreateCard("Tới Hạn (7 ngày)", stats.DueSoonTasks.ToString(), "⚠️", UIHelper.ColorWarning, "DUE_SOON"));
+            }
+
+            // Gắn sự kiện click để Drill-down
+            WireUpDashboardEvents();
+        }
+
+        private void WireUpDashboardEvents()
+        {
+            foreach (Control ctrl in pnlCards.Controls)
+            {
+                if (ctrl is Panel pnlCard)
+                {
+                    pnlCard.Cursor = Cursors.Hand;
+                    AttachClickRecursive(pnlCard, StatCard_Click);
+                }
             }
         }
 
-        private Panel CreateCard(string title, string value, string icon, Color accentColor)
+        private void AttachClickRecursive(Control parent, EventHandler handler)
+        {
+            parent.Click += handler;
+            foreach (Control child in parent.Controls)
+            {
+                AttachClickRecursive(child, handler);
+            }
+        }
+
+        private void StatCard_Click(object? sender, EventArgs e)
+        {
+            string? filterType = null;
+            Control? current = sender as Control;
+            
+            // Tìm Tag từ chính nó hoặc cha (vì user có thể click vào label bên trong panel)
+            while (current != null && current != pnlCards)
+            {
+                if (current.Tag != null)
+                {
+                    filterType = current.Tag.ToString();
+                    break;
+                }
+                current = current.Parent;
+            }
+
+            if (string.IsNullOrEmpty(filterType) || filterType == "BUDGET") return;
+
+            // Lấy ProjectId hiện tại từ ComboBox
+            int? projectId = null;
+            if (cboProject.SelectedItem != null)
+            {
+                var selectedId = (int)((dynamic)cboProject.SelectedItem).Id;
+                if (selectedId > 0) projectId = selectedId;
+            }
+
+            // Điều hướng qua frmMain (MDI Bridge)
+            if (this.MdiParent is frmMain mainForm)
+            {
+                mainForm.OpenTaskListWithFilter(filterType, projectId);
+            }
+        }
+
+        private Panel CreateCard(string title, string value, string icon, Color accentColor, string tag)
         {
             var pnl = new Panel
             {
                 Width = 260, Height = 110,
                 BackColor = UIHelper.ColorSurface,
                 Margin = new Padding(0, 0, 20, 0),
+                Tag = tag
             };
 
             var pnlAccent = new Panel { BackColor = accentColor, Dock = DockStyle.Left, Width = 6 };

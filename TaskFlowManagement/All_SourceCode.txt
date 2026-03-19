@@ -1722,7 +1722,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TaskFlowManagement.Core")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+528360b3ff049cd7162e7d36fb3f2d819e5bb27b")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+8293ef69a9d159058691fcccea312a678e7b449a")]
 [assembly: System.Reflection.AssemblyProductAttribute("TaskFlowManagement.Core")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TaskFlowManagement.Core")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
@@ -6000,7 +6000,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TaskFlowManagement.Infrastructure")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+528360b3ff049cd7162e7d36fb3f2d819e5bb27b")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+8293ef69a9d159058691fcccea312a678e7b449a")]
 [assembly: System.Reflection.AssemblyProductAttribute("TaskFlowManagement.Infrastructure")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TaskFlowManagement.Infrastructure")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
@@ -6652,6 +6652,7 @@ namespace TaskFlowManagement.Infrastructure.Repositories
             using var ctx = _contextFactory.CreateDbContext();
             return await ctx.TaskItems
                 .AsNoTracking()
+                .AsSplitQuery() // Tránh Cartesian Explosion khi có nhiều Include 1-n (Comments, Attachments)
                 .Include(t => t.Priority)
                 .Include(t => t.Status)
                 .Include(t => t.Category)
@@ -9943,29 +9944,87 @@ namespace TaskFlowManagement.WinForms.Forms
         private void RenderStatCards(DashboardStatsDto stats)
         {
             pnlCards.Controls.Clear();
-            pnlCards.Controls.Add(CreateCard("Tổng Công Việc", stats.TotalTasks.ToString(), "📁", UIHelper.ColorPrimary));
-            pnlCards.Controls.Add(CreateCard("Đã Hoàn Thành", stats.CompletedTasks.ToString(), "✅", UIHelper.ColorSuccess));
-            pnlCards.Controls.Add(CreateCard("Sự Cố (Quá Hạn)", stats.OverdueTasks.ToString(), "🚩", Color.FromArgb(185, 28, 28))); 
+            pnlCards.Controls.Add(CreateCard("Tổng Công Việc", stats.TotalTasks.ToString(), "📁", UIHelper.ColorPrimary, "ALL"));
+            pnlCards.Controls.Add(CreateCard("Đã Hoàn Thành", stats.CompletedTasks.ToString(), "✅", UIHelper.ColorSuccess, "COMPLETED"));
+            pnlCards.Controls.Add(CreateCard("Sự Cố (Quá Hạn)", stats.OverdueTasks.ToString(), "🚩", Color.FromArgb(185, 28, 28), "OVERDUE")); 
             
             if (_currentBudgetSummary != null)
             {
                 Color budgetColor = _currentBudgetSummary.IsOverBudget ? UIHelper.ColorDanger : UIHelper.ColorSuccess;
                 string budgetVal = _currentBudgetSummary.Remaining.ToString("N0") + " ₫";
-                pnlCards.Controls.Add(CreateCard("Ngân Sách Còn Lại", budgetVal, "💰", budgetColor));
+                pnlCards.Controls.Add(CreateCard("Ngân Sách Còn Lại", budgetVal, "💰", budgetColor, "BUDGET"));
             }
             else
             {
-                pnlCards.Controls.Add(CreateCard("Tới Hạn (7 ngày)", stats.DueSoonTasks.ToString(), "⚠️", UIHelper.ColorWarning));
+                pnlCards.Controls.Add(CreateCard("Tới Hạn (7 ngày)", stats.DueSoonTasks.ToString(), "⚠️", UIHelper.ColorWarning, "DUE_SOON"));
+            }
+
+            // Gắn sự kiện click để Drill-down
+            WireUpDashboardEvents();
+        }
+
+        private void WireUpDashboardEvents()
+        {
+            foreach (Control ctrl in pnlCards.Controls)
+            {
+                if (ctrl is Panel pnlCard)
+                {
+                    pnlCard.Cursor = Cursors.Hand;
+                    AttachClickRecursive(pnlCard, StatCard_Click);
+                }
             }
         }
 
-        private Panel CreateCard(string title, string value, string icon, Color accentColor)
+        private void AttachClickRecursive(Control parent, EventHandler handler)
+        {
+            parent.Click += handler;
+            foreach (Control child in parent.Controls)
+            {
+                AttachClickRecursive(child, handler);
+            }
+        }
+
+        private void StatCard_Click(object? sender, EventArgs e)
+        {
+            string? filterType = null;
+            Control? current = sender as Control;
+            
+            // Tìm Tag từ chính nó hoặc cha (vì user có thể click vào label bên trong panel)
+            while (current != null && current != pnlCards)
+            {
+                if (current.Tag != null)
+                {
+                    filterType = current.Tag.ToString();
+                    break;
+                }
+                current = current.Parent;
+            }
+
+            if (string.IsNullOrEmpty(filterType) || filterType == "BUDGET") return;
+
+            // Lấy ProjectId hiện tại từ ComboBox
+            int? projectId = null;
+            if (cboProject.SelectedItem != null)
+            {
+                var selectedId = (int)((dynamic)cboProject.SelectedItem).Id;
+                if (selectedId > 0) projectId = selectedId;
+            }
+
+            // Điều hướng qua frmMain (MDI Bridge)
+            if (this.MdiParent is frmMain mainForm)
+            {
+                mainForm.OpenTaskListWithFilter(filterType, projectId);
+            }
+        }
+
+        private Panel CreateCard(string title, string value, string icon, Color accentColor, string tag)
         {
             var pnl = new Panel
             {
                 Width = 260, Height = 110,
                 BackColor = UIHelper.ColorSurface,
                 Margin = new Padding(0, 0, 20, 0),
+                Tag = tag
             };
 
             var pnlAccent = new Panel { BackColor = accentColor, Dock = DockStyle.Left, Width = 6 };
@@ -10949,9 +11008,133 @@ namespace TaskFlowManagement.WinForms.Forms
             _expenseService = expenseService;
             _projectService = projectService;
             InitializeComponent();
+            SetupUI();
             SetupGrid();
             SetupPermissions();
             WireEvents();
+        }
+
+        private void SetupUI()
+        {
+            // 1. Cấu trúc tổng thể
+            this.BackColor = UIHelper.ColorBackground;
+            panelHeader.BackColor = UIHelper.ColorHeaderBg;
+            lblHeader.ForeColor = UIHelper.ColorHeaderFg;
+            lblHeader.Font = UIHelper.FontHeaderLarge;
+
+            // 2. Thiết lập DataGridView (Main Content)
+            UIHelper.StyleDataGridView(dgvExpenses);
+            UIHelper.ApplyAlternateRowColors(dgvExpenses);
+            dgvExpenses.Dock = DockStyle.Fill;
+            colNote.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+            colAmount.DefaultCellStyle.Format = "N0";
+
+            // 3. Toolbar & Filter Section
+            panelFilter.Height = 50;
+            panelToolbar.Height = 54;
+            panelToolbar.BackColor = UIHelper.ColorSurface;
+
+            // Tinh chỉnh khoảng cách chống đè chữ (Fix Overlap)
+            cboProject.Left = lblProjectFilter.Right + 10;
+            lblTypeFilter.Left = cboProject.Right + 20;
+            cboExpenseType.Left = lblTypeFilter.Right + 10;
+            btnRefresh.Left = cboExpenseType.Right + 15;
+            
+            UIHelper.StyleButton(btnRefresh, UIHelper.ButtonVariant.Secondary);
+            UIHelper.StyleToolButton(btnAdd, "➕ Thêm chi phí", UIHelper.ButtonVariant.Primary, btnAdd.Left, btnAdd.Top, 140, 34);
+            UIHelper.StyleToolButton(btnEdit, "✏️ Sửa", UIHelper.ButtonVariant.Success, btnEdit.Left, btnEdit.Top, 80, 34);
+            UIHelper.StyleToolButton(btnDelete, "🗑️ Xóa", UIHelper.ButtonVariant.Danger, btnDelete.Left, btnDelete.Top, 80, 34);
+            UIHelper.StyleToolButton(btnDetail, "📋 Chi tiết", UIHelper.ButtonVariant.Slate, btnDetail.Left, btnDetail.Top, 100, 34);
+
+            // 4. Dàn đều Summary Cards (Responsive Top Section)
+            // Thay thế pnlSummaryCard hiện tại bằng TableLayoutPanel
+            var tlpSummary = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 4,
+                RowCount = 1,
+                BackColor = Color.Transparent
+            };
+
+            // Thiết lập tỷ lệ 25% cho mỗi cột
+            for (int i = 0; i < 4; i++)
+            {
+                tlpSummary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+            }
+
+            // Di chuyển các label vào các "Card" panel con của TableLayoutPanel
+            tlpSummary.Controls.Add(CreateStatCard(lblBudgetTitle, lblBudgetVal), 0, 0);
+            tlpSummary.Controls.Add(CreateStatCard(lblTotalExpenseTitle, lblTotalExpenseVal), 1, 0);
+            tlpSummary.Controls.Add(CreateStatCard(lblRemainingTitle, lblRemainingVal), 2, 0);
+            tlpSummary.Controls.Add(CreateUsageCard(lblUsagePct), 3, 0);
+
+            // Cấu hình panelSummary để chứa tlpSummary với padding 10px
+            panelSummary.Height = 110;
+            panelSummary.Padding = new Padding(10, 10, 10, 0);
+            panelSummary.Controls.Clear();
+            panelSummary.Controls.Add(tlpSummary);
+
+            // Đảm bảo Padding đồng bộ cho toàn bộ form
+            panelFilter.Padding = new Padding(10, 0, 10, 0);
+            panelToolbar.Padding = new Padding(10, 0, 10, 0);
+        }
+
+        private Panel CreateStatCard(Label title, Label val)
+        {
+            var pnl = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = UIHelper.ColorSurface,
+                Margin = new Padding(4),
+                BorderStyle = BorderStyle.None
+            };
+            
+            title.Dock = DockStyle.Top;
+            title.Height = 25;
+            title.TextAlign = ContentAlignment.BottomLeft;
+            title.Font = UIHelper.FontLabel;
+            title.ForeColor = UIHelper.ColorMuted;
+            title.Padding = new Padding(10, 0, 0, 0);
+
+            val.Dock = DockStyle.Fill;
+            val.TextAlign = ContentAlignment.MiddleLeft;
+            val.Font = UIHelper.FontHeaderLarge;
+            val.Padding = new Padding(10, 0, 0, 10);
+
+            pnl.Controls.Add(val);
+            pnl.Controls.Add(title);
+            return pnl;
+        }
+
+        private Panel CreateUsageCard(Label pct)
+        {
+            var pnl = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = UIHelper.ColorSurface,
+                Margin = new Padding(4),
+                BorderStyle = BorderStyle.None
+            };
+
+            var title = new Label
+            {
+                Text = "TỶ LỆ SỬ DỤNG",
+                Dock = DockStyle.Top,
+                Height = 25,
+                TextAlign = ContentAlignment.BottomLeft,
+                Font = UIHelper.FontLabel,
+                ForeColor = UIHelper.ColorMuted,
+                Padding = new Padding(10, 0, 0, 0)
+            };
+
+            pct.Dock = DockStyle.Fill;
+            pct.TextAlign = ContentAlignment.MiddleRight;
+            pct.Font = new Font("Segoe UI", 18F, FontStyle.Bold);
+            pct.Padding = new Padding(0, 0, 15, 0);
+
+            pnl.Controls.Add(pct);
+            pnl.Controls.Add(title);
+            return pnl;
         }
 
         private void SetupGrid()
@@ -13578,16 +13761,40 @@ namespace TaskFlowManagement.WinForms.Forms
         }
 
         // Mở MDI child, kiểm tra tránh mở trùng form cùng type
-        private void OpenMdiChild(Form child)
+        public void OpenMdiChild(Form child)
         {
             foreach (Form existing in this.MdiChildren)
             {
                 if (existing.GetType() == child.GetType())
-                { existing.Activate(); child.Dispose(); return; }
+                { 
+                    existing.Activate(); 
+                    child.Dispose(); 
+                    return; 
+                }
             }
             child.MdiParent   = this;
             child.WindowState = FormWindowState.Maximized;
             child.Show();
+        }
+
+        /// <summary>
+        /// Điều hướng từ Dashboard xuống Danh sách Task (Drill-down)
+        /// </summary>
+        public void OpenTaskListWithFilter(string filterType, int? projectId)
+        {
+            // Kiểm tra xem Form đã mở chưa
+            var existing = this.MdiChildren.OfType<frmTaskList>().FirstOrDefault();
+            if (existing != null)
+            {
+                existing.Activate();
+                _ = existing.ApplyExternalFilter(filterType, projectId);
+            }
+            else
+            {
+                var frm = _serviceProvider.GetRequiredService<frmTaskList>();
+                OpenMdiChild(frm);
+                _ = frm.ApplyExternalFilter(filterType, projectId);
+            }
         }
 
         // ── Menu: Hệ thống ────────────────────────────────────
@@ -16054,24 +16261,46 @@ namespace TaskFlowManagement.WinForms.Forms
             base.OnLoad(e);
 
             var isNew = !_taskId.HasValue;
-            var title = isNew
+            var initialTitle = isNew
                 ? "➕  Thêm công việc mới"
                 : $"✏️  Sửa công việc (ID: {_taskId!.Value})";
 
-            this.Text = title;
-            lblHeader.Text = title;
+            this.Text = initialTitle;
+            lblHeader.Text = $"{initialTitle}  (⏳ Đang tải dữ liệu...)";
+            btnSave.Enabled = false; // Vô hiệu hóa nút lưu khi chưa nạp xong data
+            this.Cursor = Cursors.WaitCursor;
 
-            await LoadLookupsAsync();
+            try
+            {
+                // Nạp song song các danh sách tra cứu
+                await LoadLookupsAsync();
 
-            if (_taskId.HasValue)
-                await LoadTaskForEditAsync(_taskId.Value);
-            else
-                SetDefaultsForNewTask();
+                if (_taskId.HasValue)
+                {
+                    await LoadTaskForEditAsync(_taskId.Value);
+                }
+                else
+                {
+                    SetDefaultsForNewTask();
+                }
 
-            // DoubleBuffer cho FlowLayoutPanel chống flickering khi cuộn / Resize
+                // Khi nạp xong, trả lại tiêu đề chuẩn
+                lblHeader.Text = initialTitle;
+            }
+            catch (Exception ex)
+            {
+                lblHeader.Text = "❌ Lỗi nạp dữ liệu";
+                MessageBox.Show("Có lỗi xảy ra khi chuẩn bị dữ liệu:\n" + ex.Message,
+                    "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                btnSave.Enabled = true;
+                this.Cursor = Cursors.Default;
+            }
+
+            // DoubleBuffer cho FlowLayoutPanel chống flickering
             SetDoubleBuffered(pnlCommentsList);
-
-            // phím Enter gửi bình luận (Ctrl+Enter xuống dòng)
             txtNewComment.KeyDown += txtNewComment_KeyDown;
         }
 
@@ -16109,11 +16338,12 @@ namespace TaskFlowManagement.WinForms.Forms
 
                 await Task.WhenAll(tPriorities, tStatuses, tCategories, tProjects, tUsers);
 
-                _priorities = tPriorities.Result;
-                _statuses = tStatuses.Result;
-                _categories = tCategories.Result;
-                _projects = tProjects.Result;
-                _users = tUsers.Result;
+                // Thay .Result bằng await và gán trực tiếp
+                _priorities = await tPriorities;
+                _statuses = await tStatuses;
+                _categories = await tCategories;
+                _projects = await tProjects;
+                _users = await tUsers;
 
                 cboPriority.Items.Clear();
                 cboPriority.Items.Add(new ComboItem(0, "— Chọn mức ưu tiên —"));
@@ -17179,6 +17409,10 @@ namespace TaskFlowManagement.WinForms.Forms
         private int            _totalCount   = 0;
         private const int      PAGE_SIZE     = 20;
 
+        // Drill-down support
+        private string? _externalFilter;
+        private int?    _externalProjectId;
+
         // Debounce: tránh gọi DB liên tục khi user đang gõ
         private readonly System.Windows.Forms.Timer _debounceTimer = new() { Interval = 500 };
 
@@ -17216,6 +17450,32 @@ namespace TaskFlowManagement.WinForms.Forms
 
             // Đăng ký nhận thông báo thay đổi dữ liệu
             _taskService.TaskDataChanged += OnTaskDataChanged;
+        }
+
+        public async Task ApplyExternalFilter(string filterType, int? projectId)
+        {
+            _externalFilter = filterType;
+            _externalProjectId = projectId;
+
+            // Đồng bộ ComboBox Dự án
+            if (projectId.HasValue)
+            {
+                foreach (ComboItem item in cboProjectFilter.Items)
+                {
+                    if (item.Id == projectId.Value)
+                    {
+                        cboProjectFilter.SelectedItem = item;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                cboProjectFilter.SelectedIndex = 0;
+            }
+
+            _currentPage = 1;
+            await LoadDataAsync();
         }
 
         private async void OnTaskDataChanged(object? sender, EventArgs e)
@@ -17281,18 +17541,69 @@ namespace TaskFlowManagement.WinForms.Forms
             {
                 var keyword   = txtSearch.Text.Trim();
                 var statusId  = GetComboId(cboStatusFilter);
-                var projectId = GetComboId(cboProjectFilter);
-
-                // Developer chỉ thấy task được giao cho chính mình
+                var projectId = _externalProjectId ?? GetComboId(cboProjectFilter);
                 int? assignedToId = AppSession.IsManager ? null : AppSession.UserId;
 
-                var (items, total) = await _taskService.GetPagedAsync(
-                    page         : _currentPage,
-                    pageSize     : PAGE_SIZE,
-                    projectId    : projectId > 0 ? projectId    : null,
-                    assignedToId : assignedToId,
-                    statusId     : statusId  > 0 ? statusId     : null,
-                    keyword      : string.IsNullOrEmpty(keyword) ? null : keyword);
+                List<TaskItem> items;
+                int total;
+
+                // Xử lý Drill-down từ Dashboard
+                if (!string.IsNullOrEmpty(_externalFilter))
+                {
+                    if (_externalFilter == "OVERDUE")
+                    {
+                        var overdue = await _taskService.GetOverdueTasksAsync();
+                        // Lọc theo ProjectId nếu có
+                        if (projectId > 0) overdue = overdue.Where(x => x.ProjectId == projectId).ToList();
+                        // Lọc theo AssignedTo nếu là Developer
+                        if (assignedToId.HasValue) overdue = overdue.Where(x => x.AssignedToId == assignedToId).ToList();
+
+                        items = overdue;
+                        total = overdue.Count;
+                        UpdateHeaderUI("CÔNG VIỆC QUÁ HẠN", Color.Red);
+                    }
+                    else if (_externalFilter == "DUE_SOON")
+                    {
+                        var dueSoon = await _taskService.GetDueSoonTasksAsync(7);
+                        if (projectId > 0) dueSoon = dueSoon.Where(x => x.ProjectId == projectId).ToList();
+                        if (assignedToId.HasValue) dueSoon = dueSoon.Where(x => x.AssignedToId == assignedToId).ToList();
+
+                        items = dueSoon;
+                        total = dueSoon.Count;
+                        UpdateHeaderUI("CÔNG VIỆC SẮP TỚI HẠN (7 NGÀY)", Color.Orange);
+                    }
+                    else if (_externalFilter == "COMPLETED")
+                    {
+                        var res = await _taskService.GetPagedAsync(_currentPage, PAGE_SIZE, 
+                                    projectId > 0 ? projectId : null, assignedToId, statusId: 10);
+                        items = res.Items;
+                        total = res.TotalCount;
+                        UpdateHeaderUI("CÔNG VIỆC ĐÃ HOÀN THÀNH", UIHelper.ColorSuccess);
+                    }
+                    else // ALL
+                    {
+                        var res = await _taskService.GetPagedAsync(_currentPage, PAGE_SIZE, 
+                                    projectId > 0 ? projectId : null, assignedToId);
+                        items = res.Items;
+                        total = res.TotalCount;
+                        UpdateHeaderUI("DANH SÁCH CÔNG VIỆC", UIHelper.ColorPrimary);
+                    }
+                }
+                else
+                {
+                    // Truy vấn bình thường
+                    var (resItems, resTotal) = await _taskService.GetPagedAsync(
+                        page         : _currentPage,
+                        pageSize     : PAGE_SIZE,
+                        projectId    : projectId > 0 ? projectId    : null,
+                        assignedToId : assignedToId,
+                        statusId     : statusId  > 0 ? statusId     : null,
+                        keyword      : string.IsNullOrEmpty(keyword) ? null : keyword);
+
+                    items = resItems;
+                    total = resTotal;
+                    UpdateHeaderUI("DANH SÁCH CÔNG VIỆC", UIHelper.ColorPrimary);
+                }
 
                 _currentItems = items;
                 _totalCount   = total;
@@ -17307,6 +17618,13 @@ namespace TaskFlowManagement.WinForms.Forms
                 MessageBox.Show($"Không thể tải dữ liệu:\n{ex.Message}",
                     "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        private void UpdateHeaderUI(string title, Color accentColor)
+        {
+            lblHeader.Text = title;
+            lblHeader.ForeColor = accentColor;
+            this.Text = "TaskFlow - " + title;
         }
 
         // ── Grid Binding ──────────────────────────────────────────────────────
@@ -17429,14 +17747,29 @@ namespace TaskFlowManagement.WinForms.Forms
         private async void btnEdit_Click(object sender, EventArgs e)
         {
             if (_selectedTask == null) return;
-            using var dlg = new frmTaskEdit(_taskService, _projectService, _userService, _selectedTask.Id);
-            if (dlg.ShowDialog(this) == DialogResult.OK)
-                await LoadDataAsync();
+            
+            this.Cursor = Cursors.WaitCursor;
+            try
+            {
+                using var dlg = new frmTaskEdit(_taskService, _projectService, _userService, _selectedTask.Id);
+                // Lúc này Form sẽ hiện ra ngay lập tức, vì OnLoad bên trong là async.
+                if (dlg.ShowDialog(this) == DialogResult.OK)
+                {
+                    await LoadDataAsync();
+                }
+            }
+            finally
+            {
+                this.Cursor = Cursors.Default;
+            }
         }
 
-        private void dgvTasks_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
+        private async void dgvTasks_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
         {
-            if (e.RowIndex >= 0) btnEdit_Click(sender, e);
+            if (e.RowIndex >= 0) 
+            {
+                btnEdit_Click(sender, e);
+            }
         }
 
         private async void btnDelete_Click(object sender, EventArgs e)
@@ -17459,6 +17792,9 @@ namespace TaskFlowManagement.WinForms.Forms
 
         private async void btnRefresh_Click(object sender, EventArgs e)
         {
+            _externalFilter = null;
+            _externalProjectId = null;
+
             txtSearch.Clear();
             cboStatusFilter.SelectedIndex  = 0;
             cboProjectFilter.SelectedIndex = 0;
@@ -18788,7 +19124,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TaskFlowManagement.WinForms")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+528360b3ff049cd7162e7d36fb3f2d819e5bb27b")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+8293ef69a9d159058691fcccea312a678e7b449a")]
 [assembly: System.Reflection.AssemblyProductAttribute("TaskFlowManagement.WinForms")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TaskFlowManagement.WinForms")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

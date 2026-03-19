@@ -57,7 +57,7 @@ namespace TaskFlowManagement.Core.DTOs
         public decimal Budget { get; set; }
         public decimal TotalExpense { get; set; }
         public decimal Remaining => Budget - TotalExpense;
-        public double UsagePercentage => Budget > 0 ? (double)Math.Round((TotalExpense / Budget) * 100, 1) : (TotalExpense > 0 ? 100 : 0);
+        public double UsagePercentage => Budget > 0 ? (double)Math.Round((TotalExpense / Budget) * 100m, 1) : (TotalExpense > 0 ? 100.0 : 0.0);
     }
 
     /// <summary>

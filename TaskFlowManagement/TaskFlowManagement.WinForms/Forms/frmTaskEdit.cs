@@ -71,24 +71,46 @@ namespace TaskFlowManagement.WinForms.Forms
             base.OnLoad(e);
 
             var isNew = !_taskId.HasValue;
-            var title = isNew
+            var initialTitle = isNew
                 ? "➕  Thêm công việc mới"
                 : $"✏️  Sửa công việc (ID: {_taskId!.Value})";
 
-            this.Text = title;
-            lblHeader.Text = title;
+            this.Text = initialTitle;
+            lblHeader.Text = $"{initialTitle}  (⏳ Đang tải dữ liệu...)";
+            btnSave.Enabled = false; // Vô hiệu hóa nút lưu khi chưa nạp xong data
+            this.Cursor = Cursors.WaitCursor;
 
-            await LoadLookupsAsync();
+            try
+            {
+                // Nạp song song các danh sách tra cứu
+                await LoadLookupsAsync();
 
-            if (_taskId.HasValue)
-                await LoadTaskForEditAsync(_taskId.Value);
-            else
-                SetDefaultsForNewTask();
+                if (_taskId.HasValue)
+                {
+                    await LoadTaskForEditAsync(_taskId.Value);
+                }
+                else
+                {
+                    SetDefaultsForNewTask();
+                }
 
-            // DoubleBuffer cho FlowLayoutPanel chống flickering khi cuộn / Resize
+                // Khi nạp xong, trả lại tiêu đề chuẩn
+                lblHeader.Text = initialTitle;
+            }
+            catch (Exception ex)
+            {
+                lblHeader.Text = "❌ Lỗi nạp dữ liệu";
+                MessageBox.Show("Có lỗi xảy ra khi chuẩn bị dữ liệu:\n" + ex.Message,
+                    "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                btnSave.Enabled = true;
+                this.Cursor = Cursors.Default;
+            }
+
+            // DoubleBuffer cho FlowLayoutPanel chống flickering
             SetDoubleBuffered(pnlCommentsList);
-
-            // phím Enter gửi bình luận (Ctrl+Enter xuống dòng)
             txtNewComment.KeyDown += txtNewComment_KeyDown;
         }
 
@@ -126,11 +148,12 @@ namespace TaskFlowManagement.WinForms.Forms
 
                 await Task.WhenAll(tPriorities, tStatuses, tCategories, tProjects, tUsers);
 
-                _priorities = tPriorities.Result;
-                _statuses = tStatuses.Result;
-                _categories = tCategories.Result;
-                _projects = tProjects.Result;
-                _users = tUsers.Result;
+                // Thay .Result bằng await và gán trực tiếp
+                _priorities = await tPriorities;
+                _statuses = await tStatuses;
+                _categories = await tCategories;
+                _projects = await tProjects;
+                _users = await tUsers;
 
                 cboPriority.Items.Clear();
                 cboPriority.Items.Add(new ComboItem(0, "— Chọn mức ưu tiên —"));

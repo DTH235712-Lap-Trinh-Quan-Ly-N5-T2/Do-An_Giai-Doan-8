@@ -89,16 +89,40 @@ namespace TaskFlowManagement.WinForms.Forms
         }
 
         // Mở MDI child, kiểm tra tránh mở trùng form cùng type
-        private void OpenMdiChild(Form child)
+        public void OpenMdiChild(Form child)
         {
             foreach (Form existing in this.MdiChildren)
             {
                 if (existing.GetType() == child.GetType())
-                { existing.Activate(); child.Dispose(); return; }
+                { 
+                    existing.Activate(); 
+                    child.Dispose(); 
+                    return; 
+                }
             }
             child.MdiParent   = this;
             child.WindowState = FormWindowState.Maximized;
             child.Show();
+        }
+
+        /// <summary>
+        /// Điều hướng từ Dashboard xuống Danh sách Task (Drill-down)
+        /// </summary>
+        public void OpenTaskListWithFilter(string filterType, int? projectId)
+        {
+            // Kiểm tra xem Form đã mở chưa
+            var existing = this.MdiChildren.OfType<frmTaskList>().FirstOrDefault();
+            if (existing != null)
+            {
+                existing.Activate();
+                _ = existing.ApplyExternalFilter(filterType, projectId);
+            }
+            else
+            {
+                var frm = _serviceProvider.GetRequiredService<frmTaskList>();
+                OpenMdiChild(frm);
+                _ = frm.ApplyExternalFilter(filterType, projectId);
+            }
         }
 
         // ── Menu: Hệ thống ────────────────────────────────────

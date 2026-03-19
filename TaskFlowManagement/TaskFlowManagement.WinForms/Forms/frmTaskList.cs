@@ -40,6 +40,10 @@ namespace TaskFlowManagement.WinForms.Forms
         private int            _totalCount   = 0;
         private const int      PAGE_SIZE     = 20;
 
+        // Drill-down support
+        private string? _externalFilter;
+        private int?    _externalProjectId;
+
         // Debounce: tránh gọi DB liên tục khi user đang gõ
         private readonly System.Windows.Forms.Timer _debounceTimer = new() { Interval = 500 };
 
@@ -77,6 +81,32 @@ namespace TaskFlowManagement.WinForms.Forms
 
             // Đăng ký nhận thông báo thay đổi dữ liệu
             _taskService.TaskDataChanged += OnTaskDataChanged;
+        }
+
+        public async Task ApplyExternalFilter(string filterType, int? projectId)
+        {
+            _externalFilter = filterType;
+            _externalProjectId = projectId;
+
+            // Đồng bộ ComboBox Dự án
+            if (projectId.HasValue)
+            {
+                foreach (ComboItem item in cboProjectFilter.Items)
+                {
+                    if (item.Id == projectId.Value)
+                    {
+                        cboProjectFilter.SelectedItem = item;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                cboProjectFilter.SelectedIndex = 0;
+            }
+
+            _currentPage = 1;
+            await LoadDataAsync();
         }
 
         private async void OnTaskDataChanged(object? sender, EventArgs e)
@@ -142,18 +172,69 @@ namespace TaskFlowManagement.WinForms.Forms
             {
                 var keyword   = txtSearch.Text.Trim();
                 var statusId  = GetComboId(cboStatusFilter);
-                var projectId = GetComboId(cboProjectFilter);
-
-                // Developer chỉ thấy task được giao cho chính mình
+                var projectId = _externalProjectId ?? GetComboId(cboProjectFilter);
                 int? assignedToId = AppSession.IsManager ? null : AppSession.UserId;
 
-                var (items, total) = await _taskService.GetPagedAsync(
-                    page         : _currentPage,
-                    pageSize     : PAGE_SIZE,
-                    projectId    : projectId > 0 ? projectId    : null,
-                    assignedToId : assignedToId,
-                    statusId     : statusId  > 0 ? statusId     : null,
-                    keyword      : string.IsNullOrEmpty(keyword) ? null : keyword);
+                List<TaskItem> items;
+                int total;
+
+                // Xử lý Drill-down từ Dashboard
+                if (!string.IsNullOrEmpty(_externalFilter))
+                {
+                    if (_externalFilter == "OVERDUE")
+                    {
+                        var overdue = await _taskService.GetOverdueTasksAsync();
+                        // Lọc theo ProjectId nếu có
+                        if (projectId > 0) overdue = overdue.Where(x => x.ProjectId == projectId).ToList();
+                        // Lọc theo AssignedTo nếu là Developer
+                        if (assignedToId.HasValue) overdue = overdue.Where(x => x.AssignedToId == assignedToId).ToList();
+
+                        items = overdue;
+                        total = overdue.Count;
+                        UpdateHeaderUI("CÔNG VIỆC QUÁ HẠN", Color.Red);
+                    }
+                    else if (_externalFilter == "DUE_SOON")
+                    {
+                        var dueSoon = await _taskService.GetDueSoonTasksAsync(7);
+                        if (projectId > 0) dueSoon = dueSoon.Where(x => x.ProjectId == projectId).ToList();
+                        if (assignedToId.HasValue) dueSoon = dueSoon.Where(x => x.AssignedToId == assignedToId).ToList();
+
+                        items = dueSoon;
+                        total = dueSoon.Count;
+                        UpdateHeaderUI("CÔNG VIỆC SẮP TỚI HẠN (7 NGÀY)", Color.Orange);
+                    }
+                    else if (_externalFilter == "COMPLETED")
+                    {
+                        var res = await _taskService.GetPagedAsync(_currentPage, PAGE_SIZE, 
+                                    projectId > 0 ? projectId : null, assignedToId, statusId: 10);
+                        items = res.Items;
+                        total = res.TotalCount;
+                        UpdateHeaderUI("CÔNG VIỆC ĐÃ HOÀN THÀNH", UIHelper.ColorSuccess);
+                    }
+                    else // ALL
+                    {
+                        var res = await _taskService.GetPagedAsync(_currentPage, PAGE_SIZE, 
+                                    projectId > 0 ? projectId : null, assignedToId);
+                        items = res.Items;
+                        total = res.TotalCount;
+                        UpdateHeaderUI("DANH SÁCH CÔNG VIỆC", UIHelper.ColorPrimary);
+                    }
+                }
+                else
+                {
+                    // Truy vấn bình thường
+                    var (resItems, resTotal) = await _taskService.GetPagedAsync(
+                        page         : _currentPage,
+                        pageSize     : PAGE_SIZE,
+                        projectId    : projectId > 0 ? projectId    : null,
+                        assignedToId : assignedToId,
+                        statusId     : statusId  > 0 ? statusId     : null,
+                        keyword      : string.IsNullOrEmpty(keyword) ? null : keyword);
+
+                    items = resItems;
+                    total = resTotal;
+                    UpdateHeaderUI("DANH SÁCH CÔNG VIỆC", UIHelper.ColorPrimary);
+                }
 
                 _currentItems = items;
                 _totalCount   = total;
@@ -168,6 +249,13 @@ namespace TaskFlowManagement.WinForms.Forms
                 MessageBox.Show($"Không thể tải dữ liệu:\n{ex.Message}",
                     "Lỗi", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        private void UpdateHeaderUI(string title, Color accentColor)
+        {
+            lblHeader.Text = title;
+            lblHeader.ForeColor = accentColor;
+            this.Text = "TaskFlow - " + title;
         }
 
         // ── Grid Binding ──────────────────────────────────────────────────────
@@ -290,14 +378,29 @@ namespace TaskFlowManagement.WinForms.Forms
         private async void btnEdit_Click(object sender, EventArgs e)
         {
             if (_selectedTask == null) return;
-            using var dlg = new frmTaskEdit(_taskService, _projectService, _userService, _selectedTask.Id);
-            if (dlg.ShowDialog(this) == DialogResult.OK)
-                await LoadDataAsync();
+            
+            this.Cursor = Cursors.WaitCursor;
+            try
+            {
+                using var dlg = new frmTaskEdit(_taskService, _projectService, _userService, _selectedTask.Id);
+                // Lúc này Form sẽ hiện ra ngay lập tức, vì OnLoad bên trong là async.
+                if (dlg.ShowDialog(this) == DialogResult.OK)
+                {
+                    await LoadDataAsync();
+                }
+            }
+            finally
+            {
+                this.Cursor = Cursors.Default;
+            }
         }
 
-        private void dgvTasks_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
+        private async void dgvTasks_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
         {
-            if (e.RowIndex >= 0) btnEdit_Click(sender, e);
+            if (e.RowIndex >= 0) 
+            {
+                btnEdit_Click(sender, e);
+            }
         }
 
         private async void btnDelete_Click(object sender, EventArgs e)
@@ -320,6 +423,9 @@ namespace TaskFlowManagement.WinForms.Forms
 
         private async void btnRefresh_Click(object sender, EventArgs e)
         {
+            _externalFilter = null;
+            _externalProjectId = null;
+
             txtSearch.Clear();
             cboStatusFilter.SelectedIndex  = 0;
             cboProjectFilter.SelectedIndex = 0;

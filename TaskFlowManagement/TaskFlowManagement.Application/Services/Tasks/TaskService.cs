@@ -195,7 +195,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
 
             await _taskRepo.DeleteAsync(taskId);
             
-            // Xóa folder vật lý chứa đính kèm
+            // Xóa folder vật lý chứa đính kèm (Sửa lỗi theo auditor: try-catch IOException)
             try 
             {
                 var uploadsFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Uploads", "Tasks", taskId.ToString());
@@ -204,7 +204,15 @@ namespace TaskFlowManagement.Core.Services.Tasks
                     Directory.Delete(uploadsFolder, true);
                 }
             } 
-            catch { /* Ignore if it fails during cleanup */ }
+            catch (IOException ioEx)
+            {
+                // Chỉ log, không crash – tránh việc Folder đang bị process khác lock làm hỏng cả luồng xóa DB
+                Console.WriteLine($"[LOG-CLEANUP] Không thể xóa folder vật lý Task_{taskId}: {ioEx.Message}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[LOG-ERROR] Lỗi không xác định khi xóa folder vật lý: {ex.Message}");
+            }
 
             NotifyDataChanged();
             return (true, $"Đã xóa công việc \"{task.Title}\".");
@@ -427,8 +435,17 @@ namespace TaskFlowManagement.Core.Services.Tasks
             if (!fileInfo.Exists)
                 return (false, "File không tồn tại.", null);
 
+            // Validation theo yêu cầu Auditor: Kiểm tra đuôi file và dung lượng
+            var extension = fileInfo.Extension.ToLower();
+            var blacklisted = new[] { ".exe", ".msi", ".bat", ".cmd", ".ps1" };
+            if (blacklisted.Contains(extension))
+                return (false, $"Hệ thống không cho phép tải lên tệp có định dạng '{extension}' vì lý do bảo mật.", null);
+
+            const long maxFileSize = 10 * 1024 * 1024; // 10MB
+            if (fileInfo.Length > maxFileSize)
+                return (false, $"Tệp quá lớn. Dung lượng tối đa cho phép là 10MB (Tệp hiện tại: {fileInfo.Length / 1024 / 1024:F1}MB).", null);
+
             var fileName = fileInfo.Name;
-            var extension = fileInfo.Extension;
             var sizeBytes = fileInfo.Length;
 
             // Define upload path

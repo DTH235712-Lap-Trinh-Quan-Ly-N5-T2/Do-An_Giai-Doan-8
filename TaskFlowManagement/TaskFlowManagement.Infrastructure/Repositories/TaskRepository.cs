@@ -53,6 +53,7 @@ namespace TaskFlowManagement.Infrastructure.Repositories
             using var ctx = _contextFactory.CreateDbContext();
             return await ctx.TaskItems
                 .AsNoTracking()
+                .AsSplitQuery() // Tránh Cartesian Explosion khi có nhiều Include 1-n (Comments, Attachments)
                 .Include(t => t.Priority)
                 .Include(t => t.Status)
                 .Include(t => t.Category)
