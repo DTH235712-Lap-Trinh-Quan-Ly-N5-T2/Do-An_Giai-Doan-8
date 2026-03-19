@@ -18,9 +18,133 @@ namespace TaskFlowManagement.WinForms.Forms
             _expenseService = expenseService;
             _projectService = projectService;
             InitializeComponent();
+            SetupUI();
             SetupGrid();
             SetupPermissions();
             WireEvents();
+        }
+
+        private void SetupUI()
+        {
+            // 1. Cấu trúc tổng thể
+            this.BackColor = UIHelper.ColorBackground;
+            panelHeader.BackColor = UIHelper.ColorHeaderBg;
+            lblHeader.ForeColor = UIHelper.ColorHeaderFg;
+            lblHeader.Font = UIHelper.FontHeaderLarge;
+
+            // 2. Thiết lập DataGridView (Main Content)
+            UIHelper.StyleDataGridView(dgvExpenses);
+            UIHelper.ApplyAlternateRowColors(dgvExpenses);
+            dgvExpenses.Dock = DockStyle.Fill;
+            colNote.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+            colAmount.DefaultCellStyle.Format = "N0";
+
+            // 3. Toolbar & Filter Section
+            panelFilter.Height = 50;
+            panelToolbar.Height = 54;
+            panelToolbar.BackColor = UIHelper.ColorSurface;
+
+            // Tinh chỉnh khoảng cách chống đè chữ (Fix Overlap)
+            cboProject.Left = lblProjectFilter.Right + 10;
+            lblTypeFilter.Left = cboProject.Right + 20;
+            cboExpenseType.Left = lblTypeFilter.Right + 10;
+            btnRefresh.Left = cboExpenseType.Right + 15;
+            
+            UIHelper.StyleButton(btnRefresh, UIHelper.ButtonVariant.Secondary);
+            UIHelper.StyleToolButton(btnAdd, "➕ Thêm chi phí", UIHelper.ButtonVariant.Primary, btnAdd.Left, btnAdd.Top, 140, 34);
+            UIHelper.StyleToolButton(btnEdit, "✏️ Sửa", UIHelper.ButtonVariant.Success, btnEdit.Left, btnEdit.Top, 80, 34);
+            UIHelper.StyleToolButton(btnDelete, "🗑️ Xóa", UIHelper.ButtonVariant.Danger, btnDelete.Left, btnDelete.Top, 80, 34);
+            UIHelper.StyleToolButton(btnDetail, "📋 Chi tiết", UIHelper.ButtonVariant.Slate, btnDetail.Left, btnDetail.Top, 100, 34);
+
+            // 4. Dàn đều Summary Cards (Responsive Top Section)
+            // Thay thế pnlSummaryCard hiện tại bằng TableLayoutPanel
+            var tlpSummary = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 4,
+                RowCount = 1,
+                BackColor = Color.Transparent
+            };
+
+            // Thiết lập tỷ lệ 25% cho mỗi cột
+            for (int i = 0; i < 4; i++)
+            {
+                tlpSummary.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25F));
+            }
+
+            // Di chuyển các label vào các "Card" panel con của TableLayoutPanel
+            tlpSummary.Controls.Add(CreateStatCard(lblBudgetTitle, lblBudgetVal), 0, 0);
+            tlpSummary.Controls.Add(CreateStatCard(lblTotalExpenseTitle, lblTotalExpenseVal), 1, 0);
+            tlpSummary.Controls.Add(CreateStatCard(lblRemainingTitle, lblRemainingVal), 2, 0);
+            tlpSummary.Controls.Add(CreateUsageCard(lblUsagePct), 3, 0);
+
+            // Cấu hình panelSummary để chứa tlpSummary với padding 10px
+            panelSummary.Height = 110;
+            panelSummary.Padding = new Padding(10, 10, 10, 0);
+            panelSummary.Controls.Clear();
+            panelSummary.Controls.Add(tlpSummary);
+
+            // Đảm bảo Padding đồng bộ cho toàn bộ form
+            panelFilter.Padding = new Padding(10, 0, 10, 0);
+            panelToolbar.Padding = new Padding(10, 0, 10, 0);
+        }
+
+        private Panel CreateStatCard(Label title, Label val)
+        {
+            var pnl = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = UIHelper.ColorSurface,
+                Margin = new Padding(4),
+                BorderStyle = BorderStyle.None
+            };
+            
+            title.Dock = DockStyle.Top;
+            title.Height = 25;
+            title.TextAlign = ContentAlignment.BottomLeft;
+            title.Font = UIHelper.FontLabel;
+            title.ForeColor = UIHelper.ColorMuted;
+            title.Padding = new Padding(10, 0, 0, 0);
+
+            val.Dock = DockStyle.Fill;
+            val.TextAlign = ContentAlignment.MiddleLeft;
+            val.Font = UIHelper.FontHeaderLarge;
+            val.Padding = new Padding(10, 0, 0, 10);
+
+            pnl.Controls.Add(val);
+            pnl.Controls.Add(title);
+            return pnl;
+        }
+
+        private Panel CreateUsageCard(Label pct)
+        {
+            var pnl = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = UIHelper.ColorSurface,
+                Margin = new Padding(4),
+                BorderStyle = BorderStyle.None
+            };
+
+            var title = new Label
+            {
+                Text = "TỶ LỆ SỬ DỤNG",
+                Dock = DockStyle.Top,
+                Height = 25,
+                TextAlign = ContentAlignment.BottomLeft,
+                Font = UIHelper.FontLabel,
+                ForeColor = UIHelper.ColorMuted,
+                Padding = new Padding(10, 0, 0, 0)
+            };
+
+            pct.Dock = DockStyle.Fill;
+            pct.TextAlign = ContentAlignment.MiddleRight;
+            pct.Font = new Font("Segoe UI", 18F, FontStyle.Bold);
+            pct.Padding = new Padding(0, 0, 15, 0);
+
+            pnl.Controls.Add(pct);
+            pnl.Controls.Add(title);
+            return pnl;
         }
 
         private void SetupGrid()

@@ -1963,8 +1963,11 @@ namespace TaskFlowManagement.Core.Services.Expenses
 
             try
             {
+                // Audit Trail: Thời điểm phát sinh
+                expense.CreatedAt = DateTime.UtcNow;
+
                 await _expenseRepo.AddAsync(expense);
-                _taskService.NotifyDataChanged();
+                _taskService.NotifyDataChanged(); // Đồng bộ Dashboard
                 return (true, "Thêm chi phí thành công.");
             }
             catch (Exception ex)
@@ -6371,6 +6374,7 @@ namespace TaskFlowManagement.Infrastructure.Repositories
             using var ctx = _contextFactory.CreateDbContext();
             return await ctx.Expenses
                 .AsNoTracking()
+                .Include(e => e.Project)
                 .Include(e => e.CreatedBy)
                 .Where(e => e.ProjectId == projectId)
                 .OrderByDescending(e => e.ExpenseDate)
@@ -10599,6 +10603,11 @@ namespace TaskFlowManagement.WinForms.Forms
                 btnSave.Text = "💾  Lưu chi phí";
                 dtpDate.Value = DateTime.Today;
             }
+
+            // Financial Precision: Thousands separator and zero decimals
+            numAmount.ThousandsSeparator = true;
+            numAmount.DecimalPlaces = 0;
+            numAmount.Maximum = 1000000000; // 1 tỷ
         }
 
         private void WireEvents()
@@ -10681,26 +10690,41 @@ namespace TaskFlowManagement.WinForms.Forms
 
                 if (_editingExpense == null)
                 {
-                    // Audit Trail: Người tạo khoản chi
+                    // Audit Trail: Người tạo khoản chi (đảm bảo gán từ UI session)
                     expense.CreatedById = AppSession.UserId;
+
                     var (ok, msg) = await _expenseService.AddExpenseAsync(expense);
-                    if (ok) { this.DialogResult = DialogResult.OK; this.Close(); }
-                    else ShowError(msg);
+                    
+                    this.InvokeIfRequired(() => {
+                        if (ok) {
+                            this.DialogResult = DialogResult.OK;
+                            this.Close();
+                        } else {
+                            ShowError(msg);
+                        }
+                    });
                 }
                 else
                 {
                     var (ok, msg) = await _expenseService.UpdateExpenseAsync(expense);
-                    if (ok) { this.DialogResult = DialogResult.OK; this.Close(); }
-                    else ShowError(msg);
+                    
+                    this.InvokeIfRequired(() => {
+                        if (ok) {
+                            this.DialogResult = DialogResult.OK;
+                            this.Close();
+                        } else {
+                            ShowError(msg);
+                        }
+                    });
                 }
             }
             catch (Exception ex)
             {
-                ShowError("Lỗi hệ thống: " + ex.Message);
+                this.InvokeIfRequired(() => ShowError("Lỗi hệ thống: " + ex.Message));
             }
             finally
             {
-                btnSave.Enabled = true;
+                this.InvokeIfRequired(() => btnSave.Enabled = true);
             }
         }
 
@@ -10925,8 +10949,21 @@ namespace TaskFlowManagement.WinForms.Forms
             _expenseService = expenseService;
             _projectService = projectService;
             InitializeComponent();
+            SetupGrid();
             SetupPermissions();
             WireEvents();
+        }
+
+        private void SetupGrid()
+        {
+            dgvExpenses.AutoGenerateColumns = false;
+            colId.DataPropertyName = "Id";
+            colProject.DataPropertyName = "ProjectName";
+            colType.DataPropertyName = "ExpenseType";
+            colAmount.DataPropertyName = "Amount";
+            colDate.DataPropertyName = "ExpenseDateDisplay";
+            colNote.DataPropertyName = "Note";
+            colCreatedBy.DataPropertyName = "CreatorName";
         }
 
         private void SetupPermissions()
@@ -10950,9 +10987,10 @@ namespace TaskFlowManagement.WinForms.Forms
             btnRefresh.Click += async (s, e) => await LoadExpensesAsync();
 
             dgvExpenses.SelectionChanged += (s, e) => {
-                if (dgvExpenses.SelectedRows.Count > 0) {
-                    int id = (int)dgvExpenses.SelectedRows[0].Cells["colId"].Value;
-                    _selectedExpense = _allExpenses.FirstOrDefault(x => x.Id == id);
+                if (dgvExpenses.CurrentRow != null && dgvExpenses.CurrentRow.Selected) {
+                    if (dgvExpenses.CurrentRow.Cells["colId"].Value is int id) {
+                        _selectedExpense = _allExpenses.FirstOrDefault(x => x.Id == id);
+                    }
                 } else {
                     _selectedExpense = null;
                 }
@@ -10963,6 +11001,8 @@ namespace TaskFlowManagement.WinForms.Forms
             btnEdit.Click += async (s, e) => await OpenEditForm(_selectedExpense);
             btnDelete.Click += async (s, e) => await DeleteExpenseAsync();
             btnDetail.Click += (s, e) => ShowDetail();
+
+            dgvExpenses.CellFormatting += dgvExpenses_CellFormatting;
         }
 
         private void UpdateButtons()
@@ -11085,19 +11125,18 @@ namespace TaskFlowManagement.WinForms.Forms
 
         private void BindGrid(List<Expense> list)
         {
-            dgvExpenses.Rows.Clear();
-            foreach (var e in list)
+            var gridData = list.Select(e => new
             {
-                dgvExpenses.Rows.Add(
-                    e.Id,
-                    e.Project?.Name ?? "—",
-                    e.ExpenseType,
-                    e.Amount.ToString("N0") + " ₫",
-                    e.ExpenseDate.ToString("dd/MM/yyyy"),
-                    e.Note ?? "—",
-                    e.CreatedBy?.FullName ?? "Hệ thống"
-                );
-            }
+                e.Id,
+                ProjectName = e.Project?.Name ?? "—",
+                e.ExpenseType,
+                e.Amount, // Để CellFormatting tự định dạng
+                ExpenseDateDisplay = e.ExpenseDate.ToString("dd/MM/yyyy"),
+                Note = e.Note ?? "—",
+                CreatorName = e.CreatedBy?.FullName ?? "Hệ thống"
+            }).ToList();
+
+            dgvExpenses.DataSource = gridData;
             lblCount.Text = $"Tổng số: {list.Count} khoản chi.";
         }
 
@@ -11139,6 +11178,21 @@ namespace TaskFlowManagement.WinForms.Forms
                           $"Ghi chú: {_selectedExpense.Note ?? "—"}";
             
             MessageBox.Show(info, "Chi tiết chi phí", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void dgvExpenses_CellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
+        {
+            if (e.Value == null || e.RowIndex < 0) return;
+
+            // Định dạng cột Số tiền
+            if (dgvExpenses.Columns[e.ColumnIndex].Name == "colAmount")
+            {
+                if (e.Value is decimal amount)
+                {
+                    e.Value = amount.ToString("N0") + " ₫";
+                    e.FormattingApplied = true;
+                }
+            }
         }
 
         private void SetStatus(string msg) => lblStatus.Text = msg;
