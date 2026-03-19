@@ -148,20 +148,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
         }
 
         /// <summary>
-        /// Cập nhật task — gọi 2 method Repository riêng biệt để tránh EF tracking conflict:
-        ///
-        ///   1. UpdateAsync(task)
-        ///      Dùng Attach + State.Modified để cập nhật các trường nội dung
-        ///      (Title, Description, AssignedToId, PriorityId, DueDate, v.v.)
-        ///      Tuy nhiên khi entity load bằng AsNoTracking có navigation property
-        ///      (task.Status, task.Priority là object), EF đôi khi không ghi FK đúng.
-        ///
-        ///   2. UpdateStatusAsync(task.Id, task.StatusId)
-        ///      Dùng ExecuteUpdateAsync — sinh SQL "SET StatusId=? WHERE Id=?" trực tiếp,
-        ///      không phụ thuộc vào tracking state → đảm bảo StatusId luôn được ghi đúng.
-        ///
-        /// Tương tự: AssignedToId cũng được UpdateAsync ghi đúng vì là FK thuần (int?),
-        /// không có navigation conflict phức tạp như StatusId.
+        /// Cập nhật task — gọi 2 method Repository riêng biệt để tránh EF tracking conflict.
         /// </summary>
         public async Task<(bool Success, string Message)> UpdateTaskAsync(TaskItem task)
         {
@@ -195,7 +182,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
 
             await _taskRepo.DeleteAsync(taskId);
             
-            // Xóa folder vật lý chứa đính kèm (Sửa lỗi theo auditor: try-catch IOException)
+            // Xóa folder vật lý chứa đính kèm (try-catch IOException specifically per Auditor requirements)
             try 
             {
                 var uploadsFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Uploads", "Tasks", taskId.ToString());
@@ -206,12 +193,12 @@ namespace TaskFlowManagement.Core.Services.Tasks
             } 
             catch (IOException ioEx)
             {
-                // Chỉ log, không crash – tránh việc Folder đang bị process khác lock làm hỏng cả luồng xóa DB
-                Console.WriteLine($"[LOG-CLEANUP] Không thể xóa folder vật lý Task_{taskId}: {ioEx.Message}");
+                // Ghi log lỗi IO (file đang bận), tuyệt đối không crash app. Trả về thành công vì DB record đã xóa xong.
+                System.Diagnostics.Debug.WriteLine($"[CLEANUP-WARNING] IOException when deleting Task folder {taskId}: {ioEx.Message}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[LOG-ERROR] Lỗi không xác định khi xóa folder vật lý: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[CLEANUP-ERROR] Unexpected error deleting Task folder: {ex.Message}");
             }
 
             NotifyDataChanged();
@@ -241,22 +228,6 @@ namespace TaskFlowManagement.Core.Services.Tasks
         // CẬP NHẬT TRẠNG THÁI — PHÂN QUYỀN LINH HOẠT
         // ══════════════════════════════════════════════════════
 
-        /// <summary>
-        /// Chuyển trạng thái workflow với phân quyền linh hoạt.
-        ///
-        /// PHÂN QUYỀN:
-        ///   Admin / Manager → được đổi sang BẤT KỲ trong 10 status, bỏ qua workflow.
-        ///   Developer       → chỉ được đổi task được giao cho mình (AssignedToId == UserId).
-        ///
-        /// THAM SỐ statusId:
-        ///   Truyền Id trực tiếp từ ComboBox (KHÔNG dùng tên string) để tránh lỗi
-        ///   so khớp tên khi DB seed hoặc casing thay đổi.
-        ///
-        /// SO SÁNH ROLE (quan trọng):
-        ///   DB seed: "Admin", "Manager", "Developer"
-        ///   AppSession.Roles: List&lt;string&gt; — dùng OrdinalIgnoreCase để không lỗi
-        ///   nếu source nào đó trả về "admin", "MANAGER", "developer"...
-        /// </summary>
         public async Task<(bool Success, string Message)> UpdateStatusAsync(
             int taskId, int statusId,
             int requesterId, IList<string> requesterRoles)
@@ -303,7 +274,6 @@ namespace TaskFlowManagement.Core.Services.Tasks
                 return (false, "Tên trạng thái không được để trống.");
 
             var statuses = await _taskRepo.GetAllStatusesAsync();
-            // OrdinalIgnoreCase cho AssignAndTransition vì caller truyền tên string
             var target   = statuses.FirstOrDefault(
                 s => s.Name.Equals(newStatus, StringComparison.OrdinalIgnoreCase));
 

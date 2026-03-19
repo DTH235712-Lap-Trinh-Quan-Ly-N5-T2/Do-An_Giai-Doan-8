@@ -14,7 +14,7 @@ namespace TaskFlowManagement.Core.Services.Auth
     ///   3. Verify BCrypt password qua PasswordHelper
     ///   4. Load danh sách Roles để phân quyền
     ///   5. Map User → UserSessionDto (không expose PasswordHash)
-    ///   6. UpdateLastLogin fire-and-forget (không block UI)
+    ///   6. UpdateLastLogin (Async/Await Synchronized)
     ///   7. Trả LoginResult.Ok hoặc LoginResult.Fail
     ///
     /// Dùng Result Pattern (LoginResult) thay vì throw Exception
@@ -54,7 +54,7 @@ namespace TaskFlowManagement.Core.Services.Auth
             // --- Bước 5: Map → DTO (không trả User entity thô ra ngoài Service) ---
             var dto = UserSessionMapper.ToDto(userWithRoles);
 
-            // --- Bước 6: Cập nhật LastLogin (Đã chuyển sang await để tránh ObjectDisposedException) ---
+            // --- Bước 6: Cập nhật LastLogin (Async/Await Synchronized) ---
             await _userRepo.UpdateLastLoginAsync(user.Id);
 
             return LoginResult.Ok(dto);

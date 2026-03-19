@@ -44,7 +44,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - `ExecuteUpdateAsync` / `ExecuteDeleteAsync` – tránh SELECT-then-UPDATE
 - `GetPagedAsync` – phân trang + optional filter chain
 - Retry policy 3 lần khi SQL Server tạm lỗi
-- Fire-and-forget `UpdateLastLoginAsync` (không block UI)
+- Async/Await Synchronized `UpdateLastLoginAsync` (đảm bảo tính nhất quán)
 
 ---
 

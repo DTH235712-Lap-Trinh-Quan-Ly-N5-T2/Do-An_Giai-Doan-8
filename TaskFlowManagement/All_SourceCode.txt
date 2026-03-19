@@ -113,6 +113,7 @@ namespace TaskFlowManagement.Core.DTOs
 --- FILE: DashboardDTOs.cs ---
 ========================================
 
+using System;
 using System.Collections.Generic;
 
 namespace TaskFlowManagement.Core.DTOs
@@ -122,31 +123,16 @@ namespace TaskFlowManagement.Core.DTOs
     // Cung cấp số liệu tổng quan cho màn hình Admin/Manager
     // =====================================================
 
-    /// <summary>
-    /// Thống kê tổng quan cho Dashboard. 
-    /// Bao gồm các con số tóm tắt và danh sách chi tiết (Biểu đồ).
-    /// </summary>
     public class DashboardStatsDto
     {
         public int TotalTasks { get; set; }
         public int CompletedTasks { get; set; }
-        
-        /// <summary>Task đã quá hạn (DueDate < Now & !IsCompleted)</summary>
         public int OverdueTasks { get; set; }
-        
-        /// <summary>Task sắp đến hạn (trong vòng 7 ngày tới & !IsCompleted)</summary>
         public int DueSoonTasks { get; set; }
-
-        /// <summary>Thống kê số lượng task theo từng nhóm trạng thái để vẽ PieChart</summary>
         public List<StatusSummaryDto> StatusSummaries { get; set; } = new List<StatusSummaryDto>();
-
-        /// <summary>Thống kê tiến độ các dự án để vẽ BarChart</summary>
         public List<ProjectProgressDto> ProjectProgresses { get; set; } = new List<ProjectProgressDto>();
     }
 
-    /// <summary>
-    /// Số liệu đếm task theo trạng thái. Dùng để vẽ Pie Chart.
-    /// </summary>
     public class StatusSummaryDto
     {
         public string StatusName { get; set; } = string.Empty;
@@ -154,71 +140,43 @@ namespace TaskFlowManagement.Core.DTOs
         public string ColorHex { get; set; } = string.Empty;
     }
 
-    /// <summary>
-    /// Đo lường tiến độ tổng thể của Project. Dùng để vẽ Bar Chart.
-    /// </summary>
     public class ProjectProgressDto
     {
         public string ProjectName { get; set; } = string.Empty;
-        public double ProgressPercentage { get; set; }
+        // ĐÃ FIX: Đổi sang decimal để đồng bộ độ chính xác với Budget
+        public decimal ProgressPercentage { get; set; }
     }
 
-    /// <summary>
-    /// Báo cáo ngân sách dự án (GĐ6)
-    /// </summary>
     public class BudgetReportDto
     {
         public string ProjectName { get; set; } = string.Empty;
         public decimal Budget { get; set; }
         public decimal TotalExpense { get; set; }
         public decimal Remaining => Budget - TotalExpense;
-        public double UsagePercentage => Budget > 0 ? (double)Math.Round((TotalExpense / Budget) * 100, 1) : (TotalExpense > 0 ? 100 : 0);
+        public decimal UsagePercentage => Budget > 0 ? Math.Round((TotalExpense / Budget) * 100m, 1) : 0m;
     }
 
-    /// <summary>
-    /// Báo cáo chi tiết tiến độ dự án (GĐ6)
-    /// </summary>
     public class ProgressReportDto
     {
         public string ProjectName { get; set; } = string.Empty;
         public int TotalTasks { get; set; }
         public int CompletedTasks { get; set; }
-        public double AvgProgress { get; set; }
+        public decimal AvgProgress { get; set; }
         public string Status { get; set; } = string.Empty;
     }
 
-    // =====================================================
-    // DTO cho GĐ8: Quản lý Chi phí – UC-23
-    // Cung cấp tóm tắt ngân sách cho từng dự án cụ thể
-    // =====================================================
-
-    /// <summary>
-    /// Tóm tắt ngân sách + chi phí thực tế của một dự án (GĐ8).
-    /// Dùng decimal cho MỌI trường tiền tệ – tuyệt đối KHÔNG dùng double/float.
-    /// </summary>
     public class ProjectBudgetSummaryDto
     {
-        public int     ProjectId    { get; set; }
-        public string  ProjectName  { get; set; } = string.Empty;
-
-        /// <summary>Ngân sách định mức của dự án (từ Project.Budget).</summary>
-        public decimal Budget       { get; set; }
-
-        /// <summary>Tổng chi phí thực tế (SUM(Expense.Amount) từ DB).</summary>
+        public int ProjectId { get; set; }
+        public string ProjectName { get; set; } = string.Empty;
+        public decimal Budget { get; set; }
         public decimal TotalExpense { get; set; }
+        public decimal Remaining => Budget - TotalExpense;
 
-        /// <summary>Số tiền còn lại = Budget - TotalExpense (có thể âm nếu vượt quỹ).</summary>
-        public decimal Remaining    => Budget - TotalExpense;
+        public decimal UsagePercent => Budget > 0
+            ? Math.Round((TotalExpense / Budget) * 100m, 1)
+            : 0m;
 
-        /// <summary>
-        /// Tỉ lệ sử dụng ngân sách (%).
-        /// Trả về 100 nếu Budget = 0 nhưng có chi phí; trả về 0 nếu cả hai đều = 0.
-        /// </summary>
-        public double UsagePercent => Budget > 0
-            ? (double)Math.Round((TotalExpense / Budget) * 100m, 1)
-            : (TotalExpense > 0 ? 100.0 : 0.0);
-
-        /// <summary>True nếu chi phí vượt ngân sách định mức.</summary>
         public bool IsOverBudget => TotalExpense > Budget && Budget > 0;
     }
 }
@@ -1722,7 +1680,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TaskFlowManagement.Core")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+8293ef69a9d159058691fcccea312a678e7b449a")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+7043e06951562a1611ecc3edcba8a1dfcbe1d485")]
 [assembly: System.Reflection.AssemblyProductAttribute("TaskFlowManagement.Core")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TaskFlowManagement.Core")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
@@ -1775,7 +1733,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("TaskFlowManagement.Core")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+528360b3ff049cd7162e7d36fb3f2d819e5bb27b")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+7043e06951562a1611ecc3edcba8a1dfcbe1d485")]
 [assembly: System.Reflection.AssemblyProductAttribute("TaskFlowManagement.Core")]
 [assembly: System.Reflection.AssemblyTitleAttribute("TaskFlowManagement.Core")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
@@ -1818,7 +1776,7 @@ namespace TaskFlowManagement.Core.Services.Auth
     ///   3. Verify BCrypt password qua PasswordHelper
     ///   4. Load danh sách Roles để phân quyền
     ///   5. Map User → UserSessionDto (không expose PasswordHash)
-    ///   6. UpdateLastLogin fire-and-forget (không block UI)
+    ///   6. UpdateLastLogin (Async/Await Synchronized)
     ///   7. Trả LoginResult.Ok hoặc LoginResult.Fail
     ///
     /// Dùng Result Pattern (LoginResult) thay vì throw Exception
@@ -1858,9 +1816,8 @@ namespace TaskFlowManagement.Core.Services.Auth
             // --- Bước 5: Map → DTO (không trả User entity thô ra ngoài Service) ---
             var dto = UserSessionMapper.ToDto(userWithRoles);
 
-            // --- Bước 6: Cập nhật LastLogin (fire-and-forget, không await) ---
-            // _ = bỏ qua Task trả về, không block thread UI
-            _ = _userRepo.UpdateLastLoginAsync(user.Id);
+            // --- Bước 6: Cập nhật LastLogin (Async/Await Synchronized) ---
+            await _userRepo.UpdateLastLoginAsync(user.Id);
 
             return LoginResult.Ok(dto);
         }
@@ -2300,20 +2257,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
         }
 
         /// <summary>
-        /// Cập nhật task — gọi 2 method Repository riêng biệt để tránh EF tracking conflict:
-        ///
-        ///   1. UpdateAsync(task)
-        ///      Dùng Attach + State.Modified để cập nhật các trường nội dung
-        ///      (Title, Description, AssignedToId, PriorityId, DueDate, v.v.)
-        ///      Tuy nhiên khi entity load bằng AsNoTracking có navigation property
-        ///      (task.Status, task.Priority là object), EF đôi khi không ghi FK đúng.
-        ///
-        ///   2. UpdateStatusAsync(task.Id, task.StatusId)
-        ///      Dùng ExecuteUpdateAsync — sinh SQL "SET StatusId=? WHERE Id=?" trực tiếp,
-        ///      không phụ thuộc vào tracking state → đảm bảo StatusId luôn được ghi đúng.
-        ///
-        /// Tương tự: AssignedToId cũng được UpdateAsync ghi đúng vì là FK thuần (int?),
-        /// không có navigation conflict phức tạp như StatusId.
+        /// Cập nhật task — gọi 2 method Repository riêng biệt để tránh EF tracking conflict.
         /// </summary>
         public async Task<(bool Success, string Message)> UpdateTaskAsync(TaskItem task)
         {
@@ -2347,7 +2291,7 @@ namespace TaskFlowManagement.Core.Services.Tasks
 
             await _taskRepo.DeleteAsync(taskId);
             
-            // Xóa folder vật lý chứa đính kèm
+            // Xóa folder vật lý chứa đính kèm (try-catch IOException specifically per Auditor requirements)
             try 
             {
                 var uploadsFolder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Uploads", "Tasks", taskId.ToString());
@@ -2356,7 +2300,15 @@ namespace TaskFlowManagement.Core.Services.Tasks
                     Directory.Delete(uploadsFolder, true);
                 }
             } 
-            catch { /* Ignore if it fails during cleanup */ }
+            catch (IOException ioEx)
+            {
+                // Ghi log lỗi IO (file đang bận), tuyệt đối không crash app. Trả về thành công vì DB record đã xóa xong.
+                System.Diagnostics.Debug.WriteLine($"[CLEANUP-WARNING] IOException when deleting Task folder {taskId}: {ioEx.Message}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[CLEANUP-ERROR] Unexpected error deleting Task folder: {ex.Message}");
+            }
 
             NotifyDataChanged();
             return (true, $"Đã xóa công việc \"{task.Title}\".");
@@ -2385,22 +2337,6 @@ namespace TaskFlowManagement.Core.Services.Tasks
         // CẬP NHẬT TRẠNG THÁI — PHÂN QUYỀN LINH HOẠT
         // ══════════════════════════════════════════════════════
 
-        /// <summary>
-        /// Chuyển trạng thái workflow với phân quyền linh hoạt.
-        ///
-        /// PHÂN QUYỀN:
-        ///   Admin / Manager → được đổi sang BẤT KỲ trong 10 status, bỏ qua workflow.
-        ///   Developer       → chỉ được đổi task được giao cho mình (AssignedToId == UserId).
-        ///
-        /// THAM SỐ statusId:
-        ///   Truyền Id trực tiếp từ ComboBox (KHÔNG dùng tên string) để tránh lỗi
-        ///   so khớp tên khi DB seed hoặc casing thay đổi.
-        ///
-        /// SO SÁNH ROLE (quan trọng):
-        ///   DB seed: "Admin", "Manager", "Developer"
-        ///   AppSession.Roles: List&lt;string&gt; — dùng OrdinalIgnoreCase để không lỗi
-        ///   nếu source nào đó trả về "admin", "MANAGER", "developer"...
-        /// </summary>
         public async Task<(bool Success, string Message)> UpdateStatusAsync(
             int taskId, int statusId,
             int requesterId, IList<string> requesterRoles)
@@ -2447,7 +2383,6 @@ namespace TaskFlowManagement.Core.Services.Tasks
                 return (false, "Tên trạng thái không được để trống.");
 
             var statuses = await _taskRepo.GetAllStatusesAsync();
-            // OrdinalIgnoreCase cho AssignAndTransition vì caller truyền tên string
             var target   = statuses.FirstOrDefault(
                 s => s.Name.Equals(newStatus, StringComparison.OrdinalIgnoreCase));
 
@@ -2579,8 +2514,17 @@ namespace TaskFlowManagement.Core.Services.Tasks
             if (!fileInfo.Exists)
                 return (false, "File không tồn tại.", null);
 
+            // Validation theo yêu cầu Auditor: Kiểm tra đuôi file và dung lượng
+            var extension = fileInfo.Extension.ToLower();
+            var blacklisted = new[] { ".exe", ".msi", ".bat", ".cmd", ".ps1" };
+            if (blacklisted.Contains(extension))
+                return (false, $"Hệ thống không cho phép tải lên tệp có định dạng '{extension}' vì lý do bảo mật.", null);
+
+            const long maxFileSize = 10 * 1024 * 1024; // 10MB
+            if (fileInfo.Length > maxFileSize)
+                return (false, $"Tệp quá lớn. Dung lượng tối đa cho phép là 10MB (Tệp hiện tại: {fileInfo.Length / 1024 / 1024:F1}MB).", null);
+
             var fileName = fileInfo.Name;
-            var extension = fileInfo.Extension;
             var sizeBytes = fileInfo.Length;
 
             // Define upload path
