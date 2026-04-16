@@ -13,7 +13,7 @@
 | **MSSV** | DTH235712 |
 | **Lớp** | DH24TH2 |
 | **Năm học** | 2025 – 2026 |
-| **Tiến độ** | Giai đoạn 1 ✅  Giai đoạn 2 ✅  Giai đoạn 3 ✅ Giai đoạn 4 ✅  (4 / 10 hoàn thành) |
+| **Tiến độ** | Giai đoạn 8 ✅  (8 / 10 hoàn thành) |
 
 ---
 
@@ -423,7 +423,7 @@ Mỗi giai đoạn có mục tiêu rõ ràng, danh sách việc cần làm và k
 
 ---
 
-### 🔲 Giai đoạn 4 — Quản lý Công việc (Task)
+### ✅ Giai đoạn 4 — Quản lý Công việc (Task)
 
 > Mục tiêu: Manager phân công task, Developer cập nhật tiến độ công việc của mình.
 
@@ -442,7 +442,7 @@ Mỗi giai đoạn có mục tiêu rõ ràng, danh sách việc cần làm và k
 
 ---
 
-### 🔲 Giai đoạn 5 — Kanban Board
+### ✅ Giai đoạn 5 — Kanban Board
 
 > Mục tiêu: Manager theo dõi tiến độ dự án theo dạng bảng Kanban trực quan.
 
@@ -459,7 +459,7 @@ Mỗi giai đoạn có mục tiêu rõ ràng, danh sách việc cần làm và k
 
 ---
 
-### 🔲 Giai đoạn 6 — Dashboard & Báo cáo
+### ✅ Giai đoạn 6 — Dashboard & Báo cáo
 
 > Mục tiêu: Manager/Admin có màn hình tổng quan nắm bắt toàn bộ tình trạng hệ thống.
 
@@ -478,7 +478,7 @@ Mỗi giai đoạn có mục tiêu rõ ràng, danh sách việc cần làm và k
 
 ---
 
-### 🔲 Giai đoạn 7 — Bình luận & Đính kèm
+### ✅ Giai đoạn 7 — Bình luận & Đính kèm
 
 > Mục tiêu: Thành viên trao đổi trực tiếp trên từng task, đính kèm file liên quan.
 
@@ -497,7 +497,7 @@ Mỗi giai đoạn có mục tiêu rõ ràng, danh sách việc cần làm và k
 
 ---
 
-### 🔲 Giai đoạn 8 — Quản lý Chi phí (Expense)
+### ✅ Giai đoạn 8 — Quản lý Chi phí (Expense)
 
 > Mục tiêu: Theo dõi chi phí thực tế phát sinh trong từng dự án, so sánh với ngân sách.
 
